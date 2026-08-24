@@ -18,7 +18,7 @@
   </head>
   <body class="bg-[#0a0d11] text-neutral-100 antialiased overflow-hidden">
     <div id="root"></div>
-    <div id="youtube-player-host" style="position: absolute; top: -9999px; left: -9999px; width: 1px; height: 1px; opacity: 0; pointer-events: none;"></div>
+    <div id="youtube-player-host" style="position: fixed; bottom: 0; right: 0; width: 240px; height: 160px; opacity: 0.001; pointer-events: none; z-index: -999; transform: scale(0.1); transform-origin: bottom right;"></div>
     <script src="https://www.youtube.com/iframe_api"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>

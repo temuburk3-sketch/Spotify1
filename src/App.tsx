@@ -252,7 +252,11 @@ export default function App() {
         handlersRef.current.handleNextTrack();
       },
       onError: (err) => {
-        console.warn('Audio playback issue:', err);
+        console.warn('Audio playback issue, attempting auto-advance:', err);
+        // If track playback encounters an unrecoverable issue, advance safely to next song
+        setTimeout(() => {
+          handlersRef.current.handleNextTrack();
+        }, 1200);
       }
     });
 

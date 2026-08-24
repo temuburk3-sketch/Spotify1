@@ -11,21 +11,23 @@ export interface SpotifyParsedResult {
 }
 
 /**
- * Searches iTunes Search API directly from client/backend for original song audio preview
+ * Searches iTunes Search API directly from client/backend for original song audio preview & high-res artwork
  */
 export async function searchOriginalAudio(title: string, artist = ''): Promise<{
   audioUrl?: string;
   coverUrl?: string;
   duration?: number;
   album?: string;
+  artist?: string;
 } | null> {
   try {
     const cleanTitle = title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
-    const query = `${cleanTitle} ${artist}`.trim();
-    
-    // First try backend API
+    const cleanArtist = artist.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
+    const query = `${cleanTitle} ${cleanArtist}`.trim();
+
+    // 1. Try backend API first if running full-stack
     try {
-      const apiRes = await fetch(`/api/audio/match?title=${encodeURIComponent(cleanTitle)}&artist=${encodeURIComponent(artist)}`);
+      const apiRes = await fetch(`/api/audio/match?title=${encodeURIComponent(cleanTitle)}&artist=${encodeURIComponent(cleanArtist)}`);
       if (apiRes.ok) {
         const data = await apiRes.json();
         if (data && (data.previewUrl || data.audioUrl)) {
@@ -33,13 +35,14 @@ export async function searchOriginalAudio(title: string, artist = ''): Promise<{
             audioUrl: data.previewUrl || data.audioUrl,
             coverUrl: data.coverUrl,
             duration: data.duration,
-            album: data.album
+            album: data.album,
+            artist: data.artist
           };
         }
       }
     } catch {}
 
-    // Direct iTunes API query
+    // 2. Direct iTunes Open CORS API
     const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=1`;
     const res = await fetch(itunesUrl);
     if (res.ok) {
@@ -50,13 +53,79 @@ export async function searchOriginalAudio(title: string, artist = ''): Promise<{
           audioUrl: item.previewUrl,
           coverUrl: item.artworkUrl100 ? item.artworkUrl100.replace('100x100bb', '600x600bb') : undefined,
           duration: item.trackTimeMillis ? Math.round(item.trackTimeMillis / 1000) : undefined,
-          album: item.collectionName
+          album: item.collectionName,
+          artist: item.artistName
         };
       }
     }
+
+    // 3. Direct Audius Open API
+    try {
+      const audiusUrl = `https://discoveryprovider.audius.co/v1/tracks/search?query=${encodeURIComponent(query)}&app_name=SOUNDPULSE`;
+      const aRes = await fetch(audiusUrl);
+      if (aRes.ok) {
+        const aData = await aRes.json();
+        if (aData.data && aData.data.length > 0) {
+          const track = aData.data[0];
+          return {
+            audioUrl: `https://discoveryprovider.audius.co/v1/tracks/${track.id}/stream?app_name=SOUNDPULSE`,
+            coverUrl: track.artwork?.['480x480'] || track.artwork?.['150x150'],
+            duration: track.duration,
+            album: track.title,
+            artist: track.user?.name || artist
+          };
+        }
+      }
+    } catch {}
   } catch (err) {
-    console.warn('Original audio search failed:', err);
+    console.warn('Original audio search note:', err);
   }
+  return null;
+}
+
+/**
+ * Robust fetch helper that tries direct fetch then multiple reliable CORS proxies
+ */
+async function fetchWithCorsFallback(targetUrl: string): Promise<string | null> {
+  // 1. Direct fetch
+  try {
+    const res = await fetch(targetUrl);
+    if (res.ok) {
+      const text = await res.text();
+      if (text && text.length > 50) return text;
+    }
+  } catch {}
+
+  // 2. AllOrigins Proxy
+  try {
+    const pUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+    const pRes = await fetch(pUrl);
+    if (pRes.ok) {
+      const text = await pRes.text();
+      if (text && text.length > 50) return text;
+    }
+  } catch {}
+
+  // 3. CorsProxy.io
+  try {
+    const pUrl = `https://corsproxy.io/?url=${encodeURIComponent(targetUrl)}`;
+    const pRes = await fetch(pUrl);
+    if (pRes.ok) {
+      const text = await pRes.text();
+      if (text && text.length > 50) return text;
+    }
+  } catch {}
+
+  // 4. CodeTabs Proxy
+  try {
+    const pUrl = `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`;
+    const pRes = await fetch(pUrl);
+    if (pRes.ok) {
+      const text = await pRes.text();
+      if (text && text.length > 50) return text;
+    }
+  } catch {}
+
   return null;
 }
 
@@ -86,7 +155,7 @@ export async function parseSpotifyUrl(urlInput: string): Promise<SpotifyParsedRe
 
   const cleanUrl = `https://open.spotify.com/${type}/${spotifyId}`;
 
-  // 1. Try resolving via our server backend endpoint
+  // 1. Try resolving via backend endpoint (if server is active)
   try {
     const serverRes = await fetch(`/api/spotify/resolve?url=${encodeURIComponent(cleanUrl)}`);
     if (serverRes.ok) {
@@ -104,14 +173,15 @@ export async function parseSpotifyUrl(urlInput: string): Promise<SpotifyParsedRe
       }
     }
   } catch (err) {
-    console.warn('Server resolve failed, attempting direct fallback...', err);
+    console.warn('Server resolve failed, attempting direct and proxy fallback...', err);
   }
 
-  // 2. Direct Fallback: Fetch Spotify embed & search matching original audio
+  // 2. Direct / Proxy Fallback: Fetch Spotify Embed and parse JSON state
   try {
-    const embedRes = await fetch(`https://open.spotify.com/embed/${type}/${spotifyId}`);
-    if (embedRes.ok) {
-      const html = await embedRes.text();
+    const embedUrl = `https://open.spotify.com/embed/${type}/${spotifyId}`;
+    const html = await fetchWithCorsFallback(embedUrl);
+
+    if (html) {
       const nextDataMatch = html.match(/<script id="__NEXT_DATA__" type="application\/json">([^<]+)<\/script>/);
       if (nextDataMatch) {
         const nextData = JSON.parse(nextDataMatch[1]);
@@ -127,42 +197,28 @@ export async function parseSpotifyUrl(urlInput: string): Promise<SpotifyParsedRe
 
           const rawList = type === 'track' ? [entity] : (entity.trackList || []);
 
-          const tracks: Track[] = await Promise.all(
-            rawList.map(async (t: any, idx: number) => {
-              const trkTitle = t.title || t.name || `Şarkı #${idx + 1}`;
-              const trkArtist = t.subtitle || (t.artists && t.artists.map((a: any) => a.name).join(', ')) || authorName;
-              const trkDuration = t.duration ? Math.round(t.duration / 1000) : 180;
-              const trkCover = t.coverArt?.sources?.[0]?.url || t.visualIdentity?.image?.[0]?.url || listCover;
+          const tracks: Track[] = rawList.map((t: any, idx: number) => {
+            const trkTitle = t.title || t.name || `Şarkı #${idx + 1}`;
+            const trkArtist = t.subtitle || (t.artists && t.artists.map((a: any) => a.name).join(', ')) || authorName;
+            const trkDuration = t.duration ? Math.round(t.duration / 1000) : 190;
+            const trkCover = t.coverArt?.sources?.[0]?.url || t.visualIdentity?.image?.[0]?.url || listCover;
 
-              let audioUrl = t.audioPreview?.url || t.preview_url;
+            const audioUrl = t.audioPreview?.url || t.preview_url || 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview122/v4/fb/3c/74/fb3c7480-781d-1830-3edd-fd15bdb23406/mzaf_17024654962565086082.plus.aac.p.m4a';
 
-              // If preview audio is missing from embed, find real match
-              if (!audioUrl) {
-                const audioMatch = await searchOriginalAudio(trkTitle, trkArtist);
-                if (audioMatch?.audioUrl) {
-                  audioUrl = audioMatch.audioUrl;
-                }
-              }
-
-              if (!audioUrl) {
-                audioUrl = 'https://cdn.pixabay.com/download/audio/2022/10/14/audio_9939f792cb.mp3?filename=tuesday-glitch-122753.mp3';
-              }
-
-              return {
-                id: `sp_${t.id || spotifyId}_${idx}_${Date.now()}`,
-                title: trkTitle,
-                artist: trkArtist,
-                album: t.album?.name || listTitle,
-                duration: trkDuration,
-                coverUrl: trkCover,
-                audioUrl: audioUrl,
-                source: 'spotify',
-                spotifyId: t.id || `${spotifyId}_${idx}`,
-                addedAt: new Date().toISOString(),
-                genre: 'Spotify Hit'
-              };
-            })
-          );
+            return {
+              id: `sp_${t.id || spotifyId}_${idx}_${Date.now()}`,
+              title: trkTitle,
+              artist: trkArtist,
+              album: t.album?.name || listTitle,
+              duration: trkDuration,
+              coverUrl: trkCover,
+              audioUrl: audioUrl,
+              source: 'spotify',
+              spotifyId: t.id || `${spotifyId}_${idx}`,
+              addedAt: new Date().toISOString(),
+              genre: 'Spotify Hit'
+            };
+          });
 
           return {
             type,
@@ -180,7 +236,7 @@ export async function parseSpotifyUrl(urlInput: string): Promise<SpotifyParsedRe
     console.warn('Direct embed parse fallback error:', err);
   }
 
-  // 3. Last resort: oEmbed
+  // 3. Last resort: Spotify oEmbed API (supports CORS)
   try {
     const oembedRes = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(cleanUrl)}`);
     if (oembedRes.ok) {

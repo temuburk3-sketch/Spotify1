@@ -386,7 +386,7 @@ class AudioEngine {
       return this.playViaHtml5(track, effectiveStart);
     }
 
-    // 4. Resolve official full song source from server (YouTube stream ID & exact duration)
+    // 4. Resolve official full song source from server or client-side APIs
     try {
       const res = await fetch(`/api/audio/full-source?title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(track.artist)}`);
       if (res.ok) {
@@ -400,10 +400,24 @@ class AudioEngine {
         }
       }
     } catch (e) {
-      console.warn('Full track resolve error:', e);
+      console.warn('Full track resolve note:', e);
     }
 
-    // 5. Fallback to direct HTML5 stream
+    // 5. Client-side Audius fallback if available
+    try {
+      const cleanQ = `${track.title} ${track.artist}`.replace(/\(.*?\)/g, '').trim();
+      const audiusRes = await fetch(`https://discoveryprovider.audius.co/v1/tracks/search?query=${encodeURIComponent(cleanQ)}&app_name=SOUNDPULSE`);
+      if (audiusRes.ok) {
+        const aData = await audiusRes.json();
+        if (aData.data && aData.data.length > 0) {
+          const aTrk = aData.data[0];
+          const streamUrl = `https://discoveryprovider.audius.co/v1/tracks/${aTrk.id}/stream?app_name=SOUNDPULSE`;
+          return this.playViaHtml5(track, effectiveStart, streamUrl);
+        }
+      }
+    } catch {}
+
+    // 6. Direct HTML5 stream or iTunes search
     return this.playViaHtml5(track, effectiveStart);
   }
 
@@ -448,6 +462,11 @@ class AudioEngine {
     }
 
     const audioSrc = overrideSrc || track.audioUrl;
+    if (!audioSrc || audioSrc.startsWith('synth:')) {
+      this.playProceduralSynth(track);
+      return;
+    }
+
     this.audio.src = audioSrc;
     this.audio.currentTime = Math.max(0, startTime);
 
@@ -463,10 +482,10 @@ class AudioEngine {
       this.silentAudio?.play().catch(() => {});
     } catch (error) {
       console.warn('Playback error, trying procedural synth fallback:', error);
-      if (!audioSrc || audioSrc.startsWith('synth:')) {
-        this.playProceduralSynth(track);
+      this.playProceduralSynth(track);
+      if (this.onPlayStateChangeCallback) {
+        this.onPlayStateChangeCallback(true);
       }
-      throw error;
     }
   }
 
