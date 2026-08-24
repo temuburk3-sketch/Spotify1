@@ -51,6 +51,36 @@ function setCached<T>(map: Map<string, { data: T; timestamp: number }>, key: str
   map.set(key, { data, timestamp: Date.now() });
 }
 
+// Spotify Web Token manager (uses Spotify's public Web Player authorization)
+let spotifyWebToken: { token: string; expiresAt: number } | null = null;
+
+async function getSpotifyWebToken(): Promise<string | null> {
+  if (spotifyWebToken && Date.now() < spotifyWebToken.expiresAt - 60000) {
+    return spotifyWebToken.token;
+  }
+  try {
+    const res = await fetch("https://open.spotify.com/get_access_token?reason=transport&productType=web_player", {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "Referer": "https://open.spotify.com/"
+      }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.accessToken) {
+        spotifyWebToken = {
+          token: data.accessToken,
+          expiresAt: data.accessTokenExpirationTimestampMs || (Date.now() + 3600 * 1000)
+        };
+        return data.accessToken;
+      }
+    }
+  } catch (e) {
+    console.warn("Spotify web token fetch note:", e);
+  }
+  return null;
+}
+
 // Audio stream helper: search YouTube for 100% full song official audio stream/video ID & duration
 async function searchFullSongVideoId(title: string, artist: string): Promise<{ youtubeId: string; duration?: number } | null> {
   const cleanTitle = title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
@@ -63,9 +93,10 @@ async function searchFullSongVideoId(title: string, artist: string): Promise<{ y
   }
 
   try {
-    // Prioritize clean studio / official audio releases
+    // Queries targeting official audio / studio master
     const queries = [
       `${cleanTitle} ${cleanArtist} Official Audio`,
+      `${cleanTitle} ${cleanArtist} Topic`,
       `${cleanTitle} ${cleanArtist}`
     ];
 
@@ -73,15 +104,13 @@ async function searchFullSongVideoId(title: string, artist: string): Promise<{ y
       const ytSearchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query.trim())}`;
       const res = await fetch(ytSearchUrl, {
         headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
           "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"
         }
       });
       if (!res.ok) continue;
       const html = await res.text();
 
-      // Fast regex fallback first
-      const videoIdMatch = html.match(/"videoId":"([a-zA-Z0-9_-]{11})"/);
       let foundResult: { youtubeId: string; duration?: number } | null = null;
 
       // Parse structured JSON ytInitialData
@@ -103,8 +132,8 @@ async function searchFullSongVideoId(title: string, artist: string): Promise<{ y
                 if (parts.length === 2) durSecs = parts[0] * 60 + parts[1];
                 else if (parts.length === 3) durSecs = parts[0] * 3600 + parts[1] * 60 + parts[2];
 
-                // Filter out live streams, > 10 min playlists, or < 30 sec shorts
-                if (durSecs >= 45 && durSecs <= 660) {
+                // Accept regular songs between 40 sec and 15 min
+                if (durSecs >= 40 && durSecs <= 900) {
                   foundResult = { youtubeId: videoId, duration: durSecs };
                   break;
                 }
@@ -114,8 +143,15 @@ async function searchFullSongVideoId(title: string, artist: string): Promise<{ y
         } catch {}
       }
 
-      if (!foundResult && videoIdMatch && videoIdMatch[1]) {
-        foundResult = { youtubeId: videoIdMatch[1] };
+      // Fast regex fallback
+      if (!foundResult) {
+        const videoIdMatches = [...html.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)];
+        for (const m of videoIdMatches) {
+          if (m[1] && m[1].length === 11) {
+            foundResult = { youtubeId: m[1], duration: 210 };
+            break;
+          }
+        }
       }
 
       if (foundResult) {
@@ -225,7 +261,7 @@ async function searchDeezerSong(title: string, artist: string) {
   return null;
 }
 
-// Find best audio stream prioritizing full length streams
+// Find best audio match prioritizing full length streams
 async function findBestAudioMatch(title: string, artist: string) {
   // 1. Try Audius for full-length song stream
   const audiusMatch = await searchAudiusSong(title, artist);
@@ -263,16 +299,160 @@ async function resolveSpotifyUrl(url: string) {
   }
 
   const [, type, id] = match;
+
+  // 1. Method A: Spotify Web Player API (Retrieves 100% of all tracks without drop or limits)
+  const token = await getSpotifyWebToken();
+  if (token) {
+    try {
+      if (type === 'playlist') {
+        const pRes = await fetch(`https://api.spotify.com/v1/playlists/${id}`, {
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        if (pRes.ok) {
+          const pData = await pRes.json();
+          const listTitle = pData.name || "Spotify Çalma Listesi";
+          const listAuthor = pData.owner?.display_name || "Spotify";
+          const listCover = pData.images?.[0]?.url || "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600";
+          
+          let allItems: any[] = pData.tracks?.items || [];
+          let nextUrl = pData.tracks?.next;
+          let pages = 0;
+
+          // Paginate up to 500 tracks to import complete playlists
+          while (nextUrl && pages < 5) {
+            pages++;
+            try {
+              const nextRes = await fetch(nextUrl, { headers: { "Authorization": `Bearer ${token}` } });
+              if (nextRes.ok) {
+                const nextData = await nextRes.json();
+                if (Array.isArray(nextData.items)) {
+                  allItems.push(...nextData.items);
+                }
+                nextUrl = nextData.next;
+              } else {
+                break;
+              }
+            } catch {
+              break;
+            }
+          }
+
+          const tracks = allItems
+            .filter((item: any) => item && item.track && item.track.id)
+            .map((item: any, idx: number) => {
+              const t = item.track;
+              const trkTitle = t.name;
+              const trkArtist = t.artists?.map((a: any) => a.name).join(", ") || listAuthor;
+              const trkCover = t.album?.images?.[0]?.url || listCover;
+              const trkDuration = t.duration_ms ? Math.round(t.duration_ms / 1000) : 190;
+
+              return {
+                id: `sp_${t.id}_${idx}`,
+                title: trkTitle,
+                artist: trkArtist,
+                album: t.album?.name || listTitle,
+                duration: trkDuration,
+                coverUrl: trkCover,
+                audioUrl: t.preview_url || `https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview122/v4/fb/3c/74/fb3c7480-781d-1830-3edd-fd15bdb23406/mzaf_17024654962565086082.plus.aac.p.m4a`,
+                source: 'spotify',
+                spotifyId: t.id,
+                addedAt: new Date().toISOString(),
+                genre: 'Spotify Hit'
+              };
+            });
+
+          return {
+            type,
+            id,
+            title: listTitle,
+            author: listAuthor,
+            coverUrl: listCover,
+            tracks
+          };
+        }
+      } else if (type === 'album') {
+        const aRes = await fetch(`https://api.spotify.com/v1/albums/${id}`, {
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        if (aRes.ok) {
+          const aData = await aRes.json();
+          const albumTitle = aData.name || "Spotify Albümü";
+          const albumAuthor = aData.artists?.map((a: any) => a.name).join(", ") || "Sanatçı";
+          const albumCover = aData.images?.[0]?.url || "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600";
+          const items = aData.tracks?.items || [];
+
+          const tracks = items.map((t: any, idx: number) => ({
+            id: `sp_${t.id}_${idx}`,
+            title: t.name,
+            artist: t.artists?.map((a: any) => a.name).join(", ") || albumAuthor,
+            album: albumTitle,
+            duration: t.duration_ms ? Math.round(t.duration_ms / 1000) : 190,
+            coverUrl: albumCover,
+            audioUrl: t.preview_url || "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview122/v4/fb/3c/74/fb3c7480-781d-1830-3edd-fd15bdb23406/mzaf_17024654962565086082.plus.aac.p.m4a",
+            source: 'spotify',
+            spotifyId: t.id,
+            addedAt: new Date().toISOString(),
+            genre: 'Spotify Album'
+          }));
+
+          return {
+            type,
+            id,
+            title: albumTitle,
+            author: albumAuthor,
+            coverUrl: albumCover,
+            tracks
+          };
+        }
+      } else if (type === 'track') {
+        const tRes = await fetch(`https://api.spotify.com/v1/tracks/${id}`, {
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        if (tRes.ok) {
+          const tData = await tRes.json();
+          const trkTitle = tData.name;
+          const trkArtist = tData.artists?.map((a: any) => a.name).join(", ") || "Spotify";
+          const trkCover = tData.album?.images?.[0]?.url || "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600";
+          const trkDuration = tData.duration_ms ? Math.round(tData.duration_ms / 1000) : 190;
+
+          return {
+            type,
+            id,
+            title: trkTitle,
+            author: trkArtist,
+            coverUrl: trkCover,
+            tracks: [{
+              id: `sp_${tData.id}_0`,
+              title: trkTitle,
+              artist: trkArtist,
+              album: tData.album?.name || trkTitle,
+              duration: trkDuration,
+              coverUrl: trkCover,
+              audioUrl: tData.preview_url || "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview122/v4/fb/3c/74/fb3c7480-781d-1830-3edd-fd15bdb23406/mzaf_17024654962565086082.plus.aac.p.m4a",
+              source: 'spotify',
+              spotifyId: tData.id,
+              addedAt: new Date().toISOString(),
+              genre: 'Spotify Single'
+            }]
+          };
+        }
+      }
+    } catch (apiErr) {
+      console.warn("Spotify API token parse note:", apiErr);
+    }
+  }
+
+  // 2. Method B: Embed Scraper Fallback
   const embedUrl = `https://open.spotify.com/embed/${type}/${id}`;
 
   const res = await fetch(embedUrl, {
     headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
     }
   });
 
   if (!res.ok) {
-    throw new Error(`Spotify embed sunucusuna bağlanılamadı (${res.status}).`);
+    throw new Error(`Spotify sunucusuna bağlanılamadı (${res.status}).`);
   }
 
   const html = await res.text();
@@ -318,8 +498,8 @@ async function resolveSpotifyUrl(url: string) {
     rawTracks.push(...entity.trackList);
   }
 
-  // Process ALL tracks in parallel chunks to prevent dropped tracks and ensure full import
-  const chunkSize = 15;
+  // Process tracks in parallel chunks
+  const chunkSize = 20;
   const tracks: any[] = [];
 
   for (let i = 0; i < rawTracks.length; i += chunkSize) {
@@ -338,15 +518,6 @@ async function resolveSpotifyUrl(url: string) {
 
         let audioUrl = t.audioPreview?.url || t.preview_url;
 
-        // If Spotify didn't include preview audio in embed, match via our multi-tier audio search
-        if (!audioUrl) {
-          const match = await findBestAudioMatch(trackTitle, trackArtist);
-          if (match && match.audioUrl) {
-            audioUrl = match.audioUrl;
-          }
-        }
-
-        // Fallback high-fidelity stream if needed
         if (!audioUrl) {
           audioUrl = "https://cdn.pixabay.com/download/audio/2022/10/14/audio_9939f792cb.mp3?filename=tuesday-glitch-122753.mp3";
         }

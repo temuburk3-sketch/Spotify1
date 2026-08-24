@@ -171,7 +171,7 @@ class AudioEngine {
   }
 
   // Initialize YouTube IFrame Player API for 100% full song streams
-  private initYouTube(): Promise<void> {
+  public initYouTube(): Promise<void> {
     if (this.ytPlayerReady && this.ytPlayer) return Promise.resolve();
     if (this.ytLoadingPromise) return this.ytLoadingPromise;
 
@@ -184,18 +184,21 @@ class AudioEngine {
               host = document.createElement('div');
               host.id = 'youtube-player-host';
               host.style.position = 'fixed';
-              host.style.top = '-9999px';
-              host.style.left = '-9999px';
-              host.style.width = '1px';
-              host.style.height = '1px';
-              host.style.opacity = '0';
+              host.style.bottom = '4px';
+              host.style.right = '4px';
+              host.style.width = '240px';
+              host.style.height = '140px';
+              host.style.zIndex = '-99';
               host.style.pointerEvents = 'none';
+              host.style.opacity = '0.01';
+              host.style.transform = 'scale(0.2)';
+              host.style.transformOrigin = 'bottom right';
               document.body.appendChild(host);
             }
 
             this.ytPlayer = new (window as any).YT.Player('youtube-player-host', {
-              height: '1',
-              width: '1',
+              height: '140',
+              width: '240',
               playerVars: {
                 autoplay: 1,
                 controls: 0,
@@ -203,11 +206,16 @@ class AudioEngine {
                 fs: 0,
                 rel: 0,
                 playsinline: 1,
-                origin: window.location.origin
+                enablejsapi: 1,
+                origin: typeof window !== 'undefined' ? window.location.origin : undefined
               },
               events: {
                 onReady: () => {
                   this.ytPlayerReady = true;
+                  try {
+                    this.ytPlayer.unMute();
+                    this.ytPlayer.setVolume(100);
+                  } catch {}
                   resolve();
                 },
                 onStateChange: (event: any) => {
@@ -235,7 +243,7 @@ class AudioEngine {
                 },
                 onError: (err: any) => {
                   console.warn('YouTube Player playback warning:', err);
-                  // If video is restricted, fallback smoothly to HTML5 audio preview
+                  // If YouTube restricted, fallback to audio stream
                   if (this.currentTrack && this.activeMode === 'youtube') {
                     this.playViaHtml5(this.currentTrack, 0);
                   }
