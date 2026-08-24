@@ -1,0 +1,6 @@
+{
+  "name": "SoundPulse - Çalma Listesi & Müzik Stüdyosu",
+  "description": "Spotify entegrasyonu, sınırsız şarkı atlama/tekrarlama, reklamsız internetsiz offline dinleme, ortak çalışma ve özel kapak tasarımı sunan modern müzik çalar.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
