@@ -1,5 +1,5 @@
 import React, { useState, memo } from 'react';
-import { Home, Search, Library, PlusCircle, Link as LinkIcon, UploadCloud, Users, WifiOff, HardDrive, Music, Sparkles, Disc, Trash2, Edit3, Check, ShieldCheck, KeyRound } from 'lucide-react';
+import { Home, Search, Library, PlusCircle, Link as LinkIcon, UploadCloud, Users, WifiOff, HardDrive, Music, Sparkles, Disc, Trash2, Edit3, Check, ShieldCheck, KeyRound, Download, Smartphone } from 'lucide-react';
 import { Playlist } from '../types';
 import { getCurrentUser, updateCurrentUser } from '../services/collaboration';
 import { getStoredPIN } from '../services/recommendationService';
@@ -18,6 +18,7 @@ interface SidebarProps {
   onOpenJoinRoom: () => void;
   onOpenOfflineManager: () => void;
   onOpenPrivateMode: () => void;
+  onOpenInstallApp: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = memo(({
@@ -33,7 +34,8 @@ export const Sidebar: React.FC<SidebarProps> = memo(({
   onOpenLocalImport,
   onOpenJoinRoom,
   onOpenOfflineManager,
-  onOpenPrivateMode
+  onOpenPrivateMode,
+  onOpenInstallApp
 }) => {
   const [currentUser, setCurrentUser] = useState(getCurrentUser());
   const [isEditingUser, setIsEditingUser] = useState(false);
@@ -131,6 +133,20 @@ export const Sidebar: React.FC<SidebarProps> = memo(({
             <HardDrive className="w-4 h-4 text-emerald-400" />
           )}
           <span>İnternetsiz Dinleme ({isOfflineMode ? 'Aktif' : 'Mod'})</span>
+        </button>
+
+        <button
+          onClick={onOpenInstallApp}
+          className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-bold bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 transition shadow-xs cursor-pointer group"
+          title="SoundPulse Uygulamasını Telefona/PC'ye İndir"
+        >
+          <div className="flex items-center gap-3">
+            <Download className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition" />
+            <span>Uygulamayı İndir / Kur</span>
+          </div>
+          <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-emerald-400 text-black font-extrabold">
+            PWA
+          </span>
         </button>
 
         <button

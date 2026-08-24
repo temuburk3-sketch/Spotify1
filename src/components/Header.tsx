@@ -1,5 +1,5 @@
 import React, { memo } from 'react';
-import { Menu, Search, Link as LinkIcon, WifiOff, HardDrive, Sparkles, Users, Plus, ShieldCheck, Zap } from 'lucide-react';
+import { Menu, Search, Link as LinkIcon, WifiOff, HardDrive, Sparkles, Users, Plus, ShieldCheck, Zap, Download } from 'lucide-react';
 import { Playlist } from '../types';
 
 interface HeaderProps {
@@ -10,6 +10,7 @@ interface HeaderProps {
   onOpenOfflineManager: () => void;
   onOpenPrivateMode: () => void;
   onOpenRecommendations: () => void;
+  onOpenInstallApp: () => void;
   isOfflineMode: boolean;
   onSearchFocus: () => void;
 }
@@ -22,6 +23,7 @@ export const Header: React.FC<HeaderProps> = memo(({
   onOpenOfflineManager,
   onOpenPrivateMode,
   onOpenRecommendations,
+  onOpenInstallApp,
   isOfflineMode,
   onSearchFocus
 }) => {
@@ -57,14 +59,24 @@ export const Header: React.FC<HeaderProps> = memo(({
 
       {/* Right: Quick actions & Premium Badges */}
       <div className="flex items-center gap-2 md:gap-3">
+        {/* Install / Download App Button */}
+        <button
+          onClick={onOpenInstallApp}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-black bg-gradient-to-r from-emerald-500/20 to-teal-500/20 hover:from-emerald-500/30 hover:to-teal-500/30 text-emerald-300 border border-emerald-500/50 transition shadow-md shadow-emerald-500/10 cursor-pointer animate-pulse hover:animate-none"
+          title="SoundPulse'ı Telefona veya Masaüstüne İndir / Yükle"
+        >
+          <Download className="w-3.5 h-3.5 text-emerald-400" />
+          <span>Uygulamayı İndir</span>
+        </button>
+
         {/* Private Mode & PIN Button */}
         <button
           onClick={onOpenPrivateMode}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-neutral-900 hover:bg-neutral-800 text-teal-300 border border-teal-500/30 transition"
+          className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-neutral-900 hover:bg-neutral-800 text-teal-300 border border-teal-500/30 transition"
           title="Kişisel Özel Mod & PIN Kilidi"
         >
           <ShieldCheck className="w-3.5 h-3.5 text-teal-400" />
-          <span className="hidden md:inline">Kişisel Mod</span>
+          <span>Kişisel Mod</span>
         </button>
 
         {/* Offline Mode Indicator */}

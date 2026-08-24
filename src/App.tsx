@@ -17,6 +17,8 @@ import { PrivateModeModal } from './components/Settings/PrivateModeModal';
 import { PinLockScreen } from './components/Settings/PinLockScreen';
 import { QueueDrawer } from './components/Queue/QueueDrawer';
 import { JoinRoomModal } from './components/Playlist/JoinRoomModal';
+import { InstallModal } from './components/InstallModal';
+import { usePWAInstall } from './hooks/usePWAInstall';
 
 import { Playlist, Track, RepeatMode, AudioSettings } from './types';
 import { DEFAULT_PLAYLISTS } from './data/defaultPlaylists';
@@ -68,6 +70,10 @@ export default function App() {
     bassBoost: false,
     spatialAudio: false
   });
+
+  // PWA Install State
+  const { isInstalled, hasNativePrompt, promptInstall } = usePWAInstall();
+  const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
 
   // Modals & Drawers
   const [isCoverStudioOpen, setIsCoverStudioOpen] = useState(false);
@@ -222,7 +228,15 @@ export default function App() {
     }
   }, [playlists]);
 
-  // Audio Engine Event Callbacks
+  // Handlers ref to always provide fresh state to AudioEngine & MediaSession callbacks
+  const handlersRef = useRef({
+    handleTogglePlay: () => {},
+    handleNextTrack: () => {},
+    handlePrevTrack: () => {},
+    handleSeek: (to: number) => {}
+  });
+
+  // Audio Engine Event Callbacks & Media Session
   useEffect(() => {
     audioEngine.setCallbacks({
       onTimeUpdate: (cur, dur) => {
@@ -235,7 +249,7 @@ export default function App() {
         setIsPlaying(playing);
       },
       onEnded: () => {
-        handleNextTrack();
+        handlersRef.current.handleNextTrack();
       },
       onError: (err) => {
         console.warn('Audio playback issue:', err);
@@ -243,13 +257,13 @@ export default function App() {
     });
 
     audioEngine.setMediaSessionActionHandlers({
-      onPlay: () => handleTogglePlay(),
-      onPause: () => handleTogglePlay(),
-      onNext: () => handleNextTrack(),
-      onPrev: () => handlePrevTrack(),
-      onSeek: (to) => handleSeek(to)
+      onPlay: () => handlersRef.current.handleTogglePlay(),
+      onPause: () => handlersRef.current.handleTogglePlay(),
+      onNext: () => handlersRef.current.handleNextTrack(),
+      onPrev: () => handlersRef.current.handlePrevTrack(),
+      onSeek: (to) => handlersRef.current.handleSeek(to)
     });
-  }, [currentTrack, queue, repeatMode, isShuffle, playlists, activePlaylistId]);
+  }, []);
 
   // Collaboration Bus Listener
   useEffect(() => {
@@ -432,6 +446,14 @@ export default function App() {
     audioEngine.setVolume(willMute ? 0 : audioSettings.volume);
   };
 
+  // Sync latest handlers to ref on every render for stable event subscriptions
+  handlersRef.current = {
+    handleTogglePlay,
+    handleNextTrack,
+    handlePrevTrack,
+    handleSeek
+  };
+
   // Playlist Management
   const handlePlayPlaylist = (playlist: Playlist, shuffle = false) => {
     if (playlist.tracks.length === 0) return;
@@ -599,6 +621,7 @@ export default function App() {
           onOpenJoinRoom={() => setIsJoinRoomOpen(true)}
           onOpenOfflineManager={() => setIsOfflineManagerOpen(true)}
           onOpenPrivateMode={() => setIsPrivateModeOpen(true)}
+          onOpenInstallApp={() => setIsInstallModalOpen(true)}
         />
       </div>
 
@@ -644,6 +667,10 @@ export default function App() {
                 setIsPrivateModeOpen(true);
                 setIsMobileSidebarOpen(false);
               }}
+              onOpenInstallApp={() => {
+                setIsInstallModalOpen(true);
+                setIsMobileSidebarOpen(false);
+              }}
             />
           </div>
           <div className="flex-1" onClick={() => setIsMobileSidebarOpen(false)} />
@@ -660,6 +687,7 @@ export default function App() {
           onOpenOfflineManager={() => setIsOfflineManagerOpen(true)}
           onOpenPrivateMode={() => setIsPrivateModeOpen(true)}
           onOpenRecommendations={() => setActiveView('recommendations')}
+          onOpenInstallApp={() => setIsInstallModalOpen(true)}
           isOfflineMode={isOfflineMode}
           onSearchFocus={() => setActiveView('search')}
         />
@@ -908,6 +936,15 @@ export default function App() {
       {isLocked && (
         <PinLockScreen onUnlock={() => setIsLocked(false)} />
       )}
+
+      {/* PWA Install & Download Modal */}
+      <InstallModal
+        isOpen={isInstallModalOpen}
+        onClose={() => setIsInstallModalOpen(false)}
+        hasNativePrompt={hasNativePrompt}
+        onNativeInstall={promptInstall}
+        isInstalled={isInstalled}
+      />
     </div>
   );
 }
