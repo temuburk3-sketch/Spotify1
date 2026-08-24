@@ -1,41 +1,70 @@
 {
-  "name": "SoundPulse - Müzik Çalar",
+  "id": "soundpulse-music-app",
+  "name": "SoundPulse - Müzik Çalar & Stüdyosu",
   "short_name": "SoundPulse",
-  "description": "Sınırsız şarkı atlama, internetsiz offline dinleme ve ortak çalışma sunan gelişmiş müzik çalar.",
+  "description": "Spotify entegrasyonu, sınırsız şarkı atlama, internetsiz offline dinleme ve ortak çalışma sunan gelişmiş müzik çalar.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
   "background_color": "#0a0d11",
   "theme_color": "#1ed760",
   "orientation": "portrait",
+  "lang": "tr",
+  "dir": "ltr",
+  "prefer_related_applications": false,
+  "categories": ["music", "entertainment", "audio", "utilities"],
   "icons": [
     {
-      "src": "/icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any maskable"
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
     },
     {
-      "src": "/icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
     }
   ],
-  "categories": ["music", "entertainment", "audio"],
+  "screenshots": [
+    {
+      "src": "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=1200&auto=format&fit=crop&q=80",
+      "sizes": "1200x800",
+      "type": "image/jpeg",
+      "form_factor": "wide",
+      "label": "SoundPulse Müzik Çalar Arayüzü"
+    },
+    {
+      "src": "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=600&auto=format&fit=crop&q=80",
+      "sizes": "600x1000",
+      "type": "image/jpeg",
+      "form_factor": "narrow",
+      "label": "Mobil Müzik Çalar"
+    }
+  ],
   "shortcuts": [
     {
       "name": "Şarkı Ara",
       "short_name": "Ara",
       "description": "Milyonlarca şarkı ve podcast ara",
       "url": "/?view=search",
-      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+      "icons": [{ "src": "/icon.svg", "sizes": "192x192" }]
     },
     {
       "name": "Çalma Listelerim",
       "short_name": "Listeler",
       "description": "Kişisel çalma listelerine git",
       "url": "/?view=playlists",
-      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+      "icons": [{ "src": "/icon.svg", "sizes": "192x192" }]
+    },
+    {
+      "name": "Yapay Zeka Önerileri",
+      "short_name": "Keşfet",
+      "description": "Sana özel müzik tavsiyeleri",
+      "url": "/?view=recommendations",
+      "icons": [{ "src": "/icon.svg", "sizes": "192x192" }]
     }
   ]
 }
