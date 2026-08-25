@@ -14,15 +14,18 @@ interface RecommendationsViewProps {
   onAddToQueue: (track: Track) => void;
   onDownloadTrackOffline: (track: Track) => Promise<void>;
   onOpenPrivateModeGuide: () => void;
+  onStartSongRadio?: (track: Track) => void;
 }
 
 const MOODS = [
   { id: 'all', label: '🌟 Tüm Zevklerin', desc: 'Genel dinleme profiline göre en iyi eşleşmeler' },
+  { id: 'arabesk', label: '🥀 Arabesk & Damar', desc: 'Müslüm Gürses, Azer Bülbül, Ferdi Tayfur & klasik damar eserler' },
   { id: 'turkish', label: '🇹🇷 Türkçe Pop & Hit', desc: 'Türkçe modern pop, alternatif ve hitler' },
+  { id: 'rock', label: '🎸 Anadolu & Modern Rock', desc: 'Barış Manço, Duman, Mor ve Ötesi, Şebnem Ferah' },
+  { id: 'rap', label: '🎤 Türkçe Rap & Hip-Hop', desc: 'Ezhel, Ceza, Sagopa Kajmer, Uzi, Motive' },
   { id: 'energetic', label: '🔥 Enerjik & Spor', desc: 'Yüksek BPM, motivasyon ve ritim' },
   { id: 'chill', label: '☕ Chill & Lo-Fi', desc: 'Ders, çalışma ve odaklanma için sakin ritimler' },
-  { id: 'acoustic', label: '🎸 Akustik & Dingin', desc: 'Sıcak vokaller ve akustik enstrümanlar' },
-  { id: 'driving', label: '🌃 Gece Sürüşü', desc: 'Synthwave, neon ve gece atmosferi' }
+  { id: 'driving', label: '🌃 Gece Sürüşü & Synthwave', desc: 'Kavinsky, retro dalgalar ve gece atmosferi' }
 ];
 
 export const RecommendationsView: React.FC<RecommendationsViewProps> = memo(({
@@ -33,7 +36,8 @@ export const RecommendationsView: React.FC<RecommendationsViewProps> = memo(({
   onAddTrackToPlaylist,
   onAddToQueue,
   onDownloadTrackOffline,
-  onOpenPrivateModeGuide
+  onOpenPrivateModeGuide,
+  onStartSongRadio
 }) => {
   const [activeMood, setActiveMood] = useState<string>('all');
   const [recommendations, setRecommendations] = useState<Track[]>([]);
@@ -341,6 +345,17 @@ export const RecommendationsView: React.FC<RecommendationsViewProps> = memo(({
                     </span>
 
                     <div className="flex items-center gap-1.5">
+                      {onStartSongRadio && (
+                        <button
+                          onClick={() => onStartSongRadio(track)}
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 hover:border-amber-400/50 text-amber-300 transition font-medium text-[11px]"
+                          title="Bu şarkının tarzında sonsuz radyo başlat"
+                        >
+                          <Radio className="w-3.5 h-3.5" />
+                          <span>Radyo</span>
+                        </button>
+                      )}
+
                       <button
                         onClick={() => onAddToQueue(track)}
                         className="px-2.5 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white transition font-medium"

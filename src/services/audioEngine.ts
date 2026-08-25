@@ -42,6 +42,12 @@ class AudioEngine {
   private lastTimeUpdateTs = 0;
   private lastMediaSessionPosUpdateTs = 0;
 
+  // Master and transition volume management
+  private masterVolume = 0.85;
+  private currentEffectiveVolume = 0.85;
+  private fadeInterval: any = null;
+  private isTransitioning = false;
+
   // MediaSession Action Handler Cache
   private actionHandlers: {
     onPlay?: () => void;
@@ -100,17 +106,7 @@ class AudioEngine {
   private initVisibilityListener() {
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', () => {
-        if (document.hidden) {
-          // Tab backgrounded or screen locked
-          if (this.currentTrack && (this.activeMode === 'youtube' || this.isPlaying())) {
-            // Mobile browsers automatically pause YouTube iframes on screen lock.
-            // Seamlessly transfer to HTML5 audio stream at current timestamp so sound never dies!
-            if (this.activeMode === 'youtube') {
-              const cur = this.getCurrentTime();
-              this.playViaHtml5(this.currentTrack, cur).catch(() => {});
-            }
-          }
-        } else {
+        if (!document.hidden) {
           // Returned to foreground
           if (this.isPlaying()) {
             this.acquireWakeLock().catch(() => {});
@@ -150,6 +146,29 @@ class AudioEngine {
 
     this.audio.addEventListener('ended', () => {
       if (this.activeMode !== 'html5') return;
+
+      // If the HTML5 audio element was playing a short 30-second preview, but the track is a full song (duration > 40s):
+      // Do NOT suddenly skip to the next track!
+      const currentAudioDuration = this.audio.duration || 0;
+      const expectedTrackDuration = this.currentTrack?.duration || 180;
+      const isShortPreview = currentAudioDuration > 0 && currentAudioDuration <= 35 && expectedTrackDuration > 45 && this.currentTrack?.source !== 'local';
+
+      if (isShortPreview && this.currentTrack) {
+        // Attempt resolving full YouTube audio stream
+        if (!this.currentTrack.youtubeId) {
+          fetch(`/api/audio/full-source?title=${encodeURIComponent(this.currentTrack.title)}&artist=${encodeURIComponent(this.currentTrack.artist)}`)
+            .then(r => r.json())
+            .then(data => {
+              if (data.youtubeId && this.currentTrack) {
+                this.currentTrack.youtubeId = data.youtubeId;
+                this.playViaYouTube(data.youtubeId, 30);
+              }
+            })
+            .catch(() => {});
+        }
+        return;
+      }
+
       if (this.onEndedCallback) {
         this.onEndedCallback();
       }
@@ -171,7 +190,7 @@ class AudioEngine {
 
     this.audio.addEventListener('error', (e) => {
       if (this.activeMode !== 'html5') return;
-      console.warn('HTML5 Audio error:', e);
+      console.warn('HTML5 Audio notice:', e);
       if (this.audio.crossOrigin) {
         this.audio.crossOrigin = null;
         this.audio.load();
@@ -186,7 +205,7 @@ class AudioEngine {
 
   // Initialize YouTube IFrame Player API for 100% full song streams
   public initYouTube(): Promise<void> {
-    if (this.ytPlayerReady && this.ytPlayer) return Promise.resolve();
+    if (this.ytPlayerReady && this.ytPlayer && typeof this.ytPlayer.loadVideoById === 'function') return Promise.resolve();
     if (this.ytLoadingPromise) return this.ytLoadingPromise;
 
     this.ytLoadingPromise = new Promise((resolve) => {
@@ -198,21 +217,19 @@ class AudioEngine {
               host = document.createElement('div');
               host.id = 'youtube-player-host';
               host.style.position = 'fixed';
-              host.style.bottom = '4px';
-              host.style.right = '4px';
-              host.style.width = '240px';
-              host.style.height = '140px';
-              host.style.zIndex = '-99';
+              host.style.bottom = '0px';
+              host.style.right = '0px';
+              host.style.width = '200px';
+              host.style.height = '120px';
+              host.style.zIndex = '0';
               host.style.pointerEvents = 'none';
-              host.style.opacity = '0.01';
-              host.style.transform = 'scale(0.2)';
-              host.style.transformOrigin = 'bottom right';
+              host.style.opacity = '0.001';
               document.body.appendChild(host);
             }
 
             this.ytPlayer = new (window as any).YT.Player('youtube-player-host', {
-              height: '140',
-              width: '240',
+              height: '120',
+              width: '200',
               playerVars: {
                 autoplay: 1,
                 controls: 0,
@@ -248,13 +265,7 @@ class AudioEngine {
                       this.onPlayStateChangeCallback(true);
                     }
                   } else if (event.data === 2) {
-                    // 2: PAUSED
-                    // If the page is hidden (screen locked or tab minimized on mobile), transfer to HTML5 audio stream rather than stopping sound!
-                    if (typeof document !== 'undefined' && document.hidden && this.currentTrack) {
-                      const cur = this.getCurrentTime();
-                      this.playViaHtml5(this.currentTrack, cur).catch(() => {});
-                      return;
-                    }
+                    // 2: PAUSED (normal pause or buffering pause, do NOT downgrade to 30s preview!)
                     this.clearYtInterval();
                     this.updateMediaSessionState('paused');
                     if (this.onPlayStateChangeCallback) {
@@ -263,10 +274,19 @@ class AudioEngine {
                   }
                 },
                 onError: (err: any) => {
-                  console.warn('YouTube Player playback warning:', err);
-                  // If YouTube restricted, fallback to audio stream
+                  console.warn('YouTube Player playback notice:', err);
+                  // If this video ID had restrictions (e.g. error 150/101), fetch candidate backup video ID
                   if (this.currentTrack && this.activeMode === 'youtube') {
-                    this.playViaHtml5(this.currentTrack, 0);
+                    const failedId = this.currentTrack.youtubeId;
+                    fetch(`/api/audio/full-source?title=${encodeURIComponent(this.currentTrack.title)}&artist=${encodeURIComponent(this.currentTrack.artist)}&excludeId=${encodeURIComponent(failedId || '')}`)
+                      .then(r => r.json())
+                      .then(data => {
+                        if (data.youtubeId && data.youtubeId !== failedId && this.currentTrack) {
+                          this.currentTrack.youtubeId = data.youtubeId;
+                          this.playViaYouTube(data.youtubeId, 0);
+                        }
+                      })
+                      .catch(() => {});
                   }
                 }
               }
@@ -374,8 +394,144 @@ class AudioEngine {
     }
   }
 
+  // --- Soft Transition & Volume Ramping Helpers ---
+
+  private cancelActiveFade(): void {
+    if (this.fadeInterval) {
+      clearInterval(this.fadeInterval);
+      this.fadeInterval = null;
+    }
+  }
+
+  private applyInternalVolume(vol: number): void {
+    const clamped = Math.max(0, Math.min(1, vol));
+    this.currentEffectiveVolume = clamped;
+
+    // HTML5 Audio
+    try {
+      this.audio.volume = clamped;
+    } catch {}
+
+    // Web Audio Gain Node (if initialized)
+    if (this.gainNode && this.ctx && this.ctx.state !== 'closed') {
+      try {
+        this.gainNode.gain.setValueAtTime(clamped, this.ctx.currentTime);
+      } catch {}
+    }
+
+    // YouTube Player API (0 - 100)
+    if (this.ytPlayer && typeof this.ytPlayer.setVolume === 'function') {
+      try {
+        this.ytPlayer.setVolume(Math.round(clamped * 100));
+      } catch {}
+    }
+  }
+
+  /**
+   * Smoothly fades out the audio volume from the current level down to 0.
+   * Prevents abrupt acoustic cut-offs when stopping or switching tracks.
+   */
+  public fadeOut(durationMs = 180): Promise<void> {
+    this.cancelActiveFade();
+    return new Promise((resolve) => {
+      const startVol = this.currentEffectiveVolume;
+      if (startVol <= 0.01) {
+        this.applyInternalVolume(0);
+        resolve();
+        return;
+      }
+
+      const startTime = performance.now();
+      const stepInterval = 16; // ~60fps updates
+
+      this.fadeInterval = setInterval(() => {
+        const elapsed = performance.now() - startTime;
+        const progress = Math.min(1, elapsed / Math.max(20, durationMs));
+        // Cosine ease-out curve for natural human psychoacoustic roll-off
+        const currentVol = startVol * Math.cos((progress * Math.PI) / 2);
+        this.applyInternalVolume(currentVol);
+
+        if (progress >= 1) {
+          this.cancelActiveFade();
+          this.applyInternalVolume(0);
+          resolve();
+        }
+      }, stepInterval);
+    });
+  }
+
+  /**
+   * Smoothly fades in the audio volume from 0 to the target volume.
+   */
+  public fadeIn(targetVolume: number = this.masterVolume, durationMs = 220): Promise<void> {
+    this.cancelActiveFade();
+    return new Promise((resolve) => {
+      const target = Math.max(0, Math.min(1, targetVolume));
+      if (target <= 0.01) {
+        this.applyInternalVolume(target);
+        resolve();
+        return;
+      }
+
+      this.applyInternalVolume(0);
+      const startTime = performance.now();
+      const stepInterval = 16; // ~60fps updates
+
+      this.fadeInterval = setInterval(() => {
+        const elapsed = performance.now() - startTime;
+        const progress = Math.min(1, elapsed / Math.max(20, durationMs));
+        // Sine ease-in curve for gentle attack
+        const currentVol = target * Math.sin((progress * Math.PI) / 2);
+        this.applyInternalVolume(currentVol);
+
+        if (progress >= 1) {
+          this.cancelActiveFade();
+          this.applyInternalVolume(target);
+          resolve();
+        }
+      }, stepInterval);
+    });
+  }
+
+  /**
+   * Helper function for executing an action (such as loading and playing a new track)
+   * with smooth volume fade-out and fade-in to eliminate abrupt track cuts.
+   */
+  public async softTransition<T>(action: () => Promise<T> | T, durationMs = 260): Promise<T> {
+    if (this.isTransitioning) {
+      return await action();
+    }
+
+    this.isTransitioning = true;
+    const fadeOutDuration = Math.round(durationMs * 0.45);
+    const fadeInDuration = Math.round(durationMs * 0.55);
+
+    try {
+      if (this.isPlaying() || this.currentTrack) {
+        await this.fadeOut(fadeOutDuration);
+      } else {
+        this.applyInternalVolume(0);
+      }
+
+      const result = await action();
+      this.fadeIn(this.masterVolume, fadeInDuration).catch(() => {});
+      return result;
+    } catch (err) {
+      this.applyInternalVolume(this.masterVolume);
+      throw err;
+    } finally {
+      this.isTransitioning = false;
+    }
+  }
+
   // Play full song starting from 0:00 (or specified start time)
   public async playTrack(track: Track, startTime = 0): Promise<void> {
+    this.cancelActiveFade();
+    this.applyInternalVolume(this.masterVolume);
+    return this.playTrackInternal(track, startTime);
+  }
+
+  private async playTrackInternal(track: Track, startTime = 0): Promise<void> {
     this.currentTrack = track;
     this.stopSynth();
     this.setupMediaSession(track);
@@ -393,7 +549,7 @@ class AudioEngine {
       }
     } catch {}
 
-    // 2. If track has youtubeId, play 100% full song via YouTube Engine
+    // 2. If track has youtubeId, play 100% full song via YouTube Engine instantly
     if (track.youtubeId) {
       return this.playViaYouTube(track.youtubeId, effectiveStart);
     }
@@ -407,12 +563,35 @@ class AudioEngine {
       return this.playViaHtml5(track, effectiveStart);
     }
 
-    // 4. Resolve official full song source from server or client-side APIs
+    // 4. Instant start via audioUrl (if present) while resolving full YouTube stream in background
+    if (track.audioUrl && track.audioUrl.startsWith('http')) {
+      // Start immediate playback in 0ms so user hears music instantly
+      this.playViaHtml5(track, effectiveStart).catch(() => {});
+
+      // In background, fetch full YouTube source without blocking UI or audio
+      fetch(`/api/audio/full-source?title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(track.artist)}`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.youtubeId && this.currentTrack?.id === track.id) {
+            track.youtubeId = data.youtubeId;
+            if (data.duration && data.duration > 0) {
+              track.duration = data.duration;
+            }
+            const curPos = this.getCurrentTime();
+            // Seamlessly upgrade to full stream
+            this.playViaYouTube(data.youtubeId, curPos);
+          }
+        })
+        .catch(() => {});
+      return;
+    }
+
+    // 5. Resolve official full song source from server
     try {
       const res = await fetch(`/api/audio/full-source?title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(track.artist)}`);
       if (res.ok) {
         const data = await res.json();
-        if (data.youtubeId) {
+        if (data.youtubeId && this.currentTrack?.id === track.id) {
           track.youtubeId = data.youtubeId;
           if (data.duration && data.duration > 0) {
             track.duration = data.duration;
@@ -423,20 +602,6 @@ class AudioEngine {
     } catch (e) {
       console.warn('Full track resolve note:', e);
     }
-
-    // 5. Client-side Audius fallback if available
-    try {
-      const cleanQ = `${track.title} ${track.artist}`.replace(/\(.*?\)/g, '').trim();
-      const audiusRes = await fetch(`https://discoveryprovider.audius.co/v1/tracks/search?query=${encodeURIComponent(cleanQ)}&app_name=SOUNDPULSE`);
-      if (audiusRes.ok) {
-        const aData = await audiusRes.json();
-        if (aData.data && aData.data.length > 0) {
-          const aTrk = aData.data[0];
-          const streamUrl = `https://discoveryprovider.audius.co/v1/tracks/${aTrk.id}/stream?app_name=SOUNDPULSE`;
-          return this.playViaHtml5(track, effectiveStart, streamUrl);
-        }
-      }
-    } catch {}
 
     // 6. Direct HTML5 stream or iTunes search
     return this.playViaHtml5(track, effectiveStart);
@@ -455,6 +620,7 @@ class AudioEngine {
           videoId: youtubeId,
           startSeconds: startSecs
         });
+        this.applyInternalVolume(this.currentEffectiveVolume);
         this.ytPlayer.playVideo();
         this.startYtInterval();
         this.acquireWakeLock().catch(() => {});
@@ -489,6 +655,7 @@ class AudioEngine {
     }
 
     this.audio.src = audioSrc;
+    this.applyInternalVolume(this.currentEffectiveVolume);
     this.audio.currentTime = Math.max(0, startTime);
 
     try {
@@ -573,12 +740,9 @@ class AudioEngine {
 
   public setVolume(volume: number): void {
     const vol = Math.max(0, Math.min(1, volume));
-    this.audio.volume = vol;
-    if (this.ytPlayer && this.ytPlayer.setVolume) {
-      try {
-        this.ytPlayer.setVolume(Math.round(vol * 100));
-      } catch {}
-    }
+    this.masterVolume = vol;
+    this.cancelActiveFade();
+    this.applyInternalVolume(vol);
   }
 
   public setPlaybackRate(rate: number): void {

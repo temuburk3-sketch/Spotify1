@@ -24,6 +24,44 @@ function getGenAI(): GoogleGenAI | null {
   return genAIInstance;
 }
 
+// Resilient Gemini JSON generator with automatic model cascade (e.g. on 503 high demand or 429 quota spikes)
+async function generateJsonWithGemini<T>(
+  prompt: string,
+  schema: any,
+  modelsToTry: string[] = ["gemini-3.7-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"]
+): Promise<T | null> {
+  const ai = getGenAI();
+  if (!ai) return null;
+
+  for (const model of modelsToTry) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: schema,
+        }
+      });
+
+      if (response && response.text) {
+        const parsed = JSON.parse(response.text.trim());
+        if (parsed) return parsed as T;
+      }
+    } catch (err: any) {
+      const errMsg = err?.message || String(err);
+      const isTransient = errMsg.includes("503") || errMsg.includes("high demand") || errMsg.includes("UNAVAILABLE") || errMsg.includes("429");
+      if (isTransient) {
+        console.info(`[AI Studio] Model ${model} is experiencing temporary high demand; cascading to backup model...`);
+      } else {
+        console.info(`[AI Studio] Model ${model} response notice; trying backup model...`);
+      }
+    }
+  }
+
+  return null;
+}
+
 // In-Memory Performance Caches with auto-expiry
 const videoIdCache = new Map<string, { result: { youtubeId: string; duration?: number } | null; timestamp: number }>();
 const searchCache = new Map<string, { data: any; timestamp: number }>();
@@ -82,10 +120,10 @@ async function getSpotifyWebToken(): Promise<string | null> {
 }
 
 // Audio stream helper: search YouTube for 100% full song official audio stream/video ID & duration
-async function searchFullSongVideoId(title: string, artist: string): Promise<{ youtubeId: string; duration?: number } | null> {
+async function searchFullSongVideoId(title: string, artist: string, excludeId?: string): Promise<{ youtubeId: string; duration?: number; candidateIds?: string[] } | null> {
   const cleanTitle = title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
   const cleanArtist = (artist || '').replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
-  const cacheKey = `${cleanTitle.toLowerCase()}___${cleanArtist.toLowerCase()}`;
+  const cacheKey = `${cleanTitle.toLowerCase()}___${cleanArtist.toLowerCase()}${excludeId ? `___ex_${excludeId}` : ''}`;
 
   const cached = videoIdCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
@@ -97,8 +135,11 @@ async function searchFullSongVideoId(title: string, artist: string): Promise<{ y
     const queries = [
       `${cleanTitle} ${cleanArtist} Official Audio`,
       `${cleanTitle} ${cleanArtist} Topic`,
+      `${cleanTitle} ${cleanArtist} Lyrics`,
       `${cleanTitle} ${cleanArtist}`
     ];
+
+    const collectedCandidates: string[] = [];
 
     for (const query of queries) {
       const ytSearchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query.trim())}`;
@@ -111,7 +152,7 @@ async function searchFullSongVideoId(title: string, artist: string): Promise<{ y
       if (!res.ok) continue;
       const html = await res.text();
 
-      let foundResult: { youtubeId: string; duration?: number } | null = null;
+      let foundResult: { youtubeId: string; duration?: number; candidateIds?: string[] } | null = null;
 
       // Parse structured JSON ytInitialData
       const match = html.match(/var ytInitialData = ({.*?});<\/script>/) || html.match(/ytInitialData\s*=\s*({.*?});/);
@@ -124,6 +165,9 @@ async function searchFullSongVideoId(title: string, artist: string): Promise<{ y
               if (item.videoRenderer) {
                 const v = item.videoRenderer;
                 const videoId = v.videoId;
+                if (!videoId || videoId === excludeId) continue;
+                
+                collectedCandidates.push(videoId);
                 const lenStr = v.lengthText?.simpleText || "";
                 
                 // Parse duration
@@ -133,9 +177,8 @@ async function searchFullSongVideoId(title: string, artist: string): Promise<{ y
                 else if (parts.length === 3) durSecs = parts[0] * 3600 + parts[1] * 60 + parts[2];
 
                 // Accept regular songs between 40 sec and 15 min
-                if (durSecs >= 40 && durSecs <= 900) {
-                  foundResult = { youtubeId: videoId, duration: durSecs };
-                  break;
+                if (durSecs >= 40 && durSecs <= 900 && !foundResult) {
+                  foundResult = { youtubeId: videoId, duration: durSecs, candidateIds: collectedCandidates };
                 }
               }
             }
@@ -147,14 +190,17 @@ async function searchFullSongVideoId(title: string, artist: string): Promise<{ y
       if (!foundResult) {
         const videoIdMatches = [...html.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)];
         for (const m of videoIdMatches) {
-          if (m[1] && m[1].length === 11) {
-            foundResult = { youtubeId: m[1], duration: 210 };
-            break;
+          if (m[1] && m[1].length === 11 && m[1] !== excludeId) {
+            collectedCandidates.push(m[1]);
+            if (!foundResult) {
+              foundResult = { youtubeId: m[1], duration: 210, candidateIds: collectedCandidates };
+            }
           }
         }
       }
 
       if (foundResult) {
+        foundResult.candidateIds = [...new Set(collectedCandidates)];
         videoIdCache.set(cacheKey, { result: foundResult, timestamp: Date.now() });
         return foundResult;
       }
@@ -683,15 +729,21 @@ app.get("/api/audio/search", async (req, res) => {
 
 // Full Track Resolution (YouTube Video ID & duration for full song playback from 0:00)
 app.get("/api/audio/full-source", async (req, res) => {
-  const { title, artist } = req.query;
+  const { title, artist, excludeId } = req.query;
   if (!title || typeof title !== "string") {
     return res.status(400).json({ error: "title parametresi gereklidir." });
   }
 
   try {
-    const result = await searchFullSongVideoId(title, (artist as string) || "");
+    const result = await searchFullSongVideoId(title, (artist as string) || "", excludeId ? String(excludeId) : undefined);
     if (result && result.youtubeId) {
-      return res.json({ youtubeId: result.youtubeId, duration: result.duration, title, artist });
+      return res.json({
+        youtubeId: result.youtubeId,
+        duration: result.duration,
+        candidateIds: result.candidateIds || [result.youtubeId],
+        title,
+        artist
+      });
     }
     res.json({ youtubeId: null });
   } catch (e: any) {
@@ -699,13 +751,289 @@ app.get("/api/audio/full-source", async (req, res) => {
   }
 });
 
+// Smart Song Radio API (Strict Theme & Genre-matching endless track stream)
+app.post("/api/radio/track", async (req, res) => {
+  try {
+    const { title = "", artist = "", genre = "", count = 10, excludeTitles = [] } = req.body;
+    const requestedCount = Math.min(Math.max(Number(count) || 10, 4), 20);
+
+    const radioCacheKey = `radio_${title.trim().toLowerCase()}_${artist.trim().toLowerCase()}_${genre.trim().toLowerCase()}_${requestedCount}`;
+    const cachedRadio = getCached(recommendationsCache, radioCacheKey);
+    if (cachedRadio) {
+      return res.json(cachedRadio);
+    }
+
+    // Classify theme & detect genre family
+    const normalizedQuery = `${title} ${artist} ${genre}`.toLowerCase();
+    let detectedTheme = "Türkçe Pop";
+    let detectedCategory = "pop";
+
+    if (
+      normalizedQuery.includes("müslüm") ||
+      normalizedQuery.includes("ferdi") ||
+      normalizedQuery.includes("bergen") ||
+      normalizedQuery.includes("azer bülbül") ||
+      normalizedQuery.includes("cengiz kurtoğlu") ||
+      normalizedQuery.includes("ibrahim tatlıses") ||
+      normalizedQuery.includes("ebru gündeş") ||
+      normalizedQuery.includes("ahmet kaya") ||
+      normalizedQuery.includes("orhan gencebay") ||
+      normalizedQuery.includes("yıldız tilbe") ||
+      normalizedQuery.includes("hakan taşıyan") ||
+      normalizedQuery.includes("kibariye") ||
+      normalizedQuery.includes("güllü") ||
+      normalizedQuery.includes("ümit besen") ||
+      normalizedQuery.includes("selahattin özdemir") ||
+      normalizedQuery.includes("arabesk") ||
+      normalizedQuery.includes("damar") ||
+      normalizedQuery.includes("taverna")
+    ) {
+      detectedTheme = "Arabesk & Damar / Klasik Fantezi";
+      detectedCategory = "arabesk";
+    } else if (
+      normalizedQuery.includes("duman") ||
+      normalizedQuery.includes("mor ve ötesi") ||
+      normalizedQuery.includes("şebnem ferah") ||
+      normalizedQuery.includes("teoman") ||
+      normalizedQuery.includes("manga") ||
+      normalizedQuery.includes("barış manço") ||
+      normalizedQuery.includes("cem karaca") ||
+      normalizedQuery.includes("erkin koray") ||
+      normalizedQuery.includes("athena") ||
+      normalizedQuery.includes("haluk levent") ||
+      normalizedQuery.includes("pinhani") ||
+      normalizedQuery.includes("madrigal") ||
+      normalizedQuery.includes("rock")
+    ) {
+      detectedTheme = "Türkçe Rock & Anadolu Rock";
+      detectedCategory = "rock";
+    } else if (
+      normalizedQuery.includes("ezhel") ||
+      normalizedQuery.includes("ceza") ||
+      normalizedQuery.includes("sagopa") ||
+      normalizedQuery.includes("uzi") ||
+      normalizedQuery.includes("motive") ||
+      normalizedQuery.includes("şanışer") ||
+      normalizedQuery.includes("contra") ||
+      normalizedQuery.includes("lvbel c5") ||
+      normalizedQuery.includes("gazapizm") ||
+      normalizedQuery.includes("no.1") ||
+      normalizedQuery.includes("blok3") ||
+      normalizedQuery.includes("rap") ||
+      normalizedQuery.includes("hip-hop") ||
+      normalizedQuery.includes("trap")
+    ) {
+      detectedTheme = "Türkçe Rap & Hip-Hop";
+      detectedCategory = "rap";
+    } else if (
+      normalizedQuery.includes("weeknd") ||
+      normalizedQuery.includes("kavinsky") ||
+      normalizedQuery.includes("daft punk") ||
+      normalizedQuery.includes("synthwave") ||
+      normalizedQuery.includes("retrowave") ||
+      normalizedQuery.includes("80s")
+    ) {
+      detectedTheme = "Synthwave & 80s Retro";
+      detectedCategory = "synthwave";
+    } else if (
+      normalizedQuery.includes("lofi") ||
+      normalizedQuery.includes("lo-fi") ||
+      normalizedQuery.includes("study") ||
+      normalizedQuery.includes("chill") ||
+      normalizedQuery.includes("kupla") ||
+      normalizedQuery.includes("wys")
+    ) {
+      detectedTheme = "Lo-Fi & Chill Beats";
+      detectedCategory = "lofi";
+    } else if (
+      normalizedQuery.includes("neffex") ||
+      normalizedQuery.includes("tevvez") ||
+      normalizedQuery.includes("hardstyle") ||
+      normalizedQuery.includes("workout") ||
+      normalizedQuery.includes("gym")
+    ) {
+      detectedTheme = "Workout & High-Energy EDM";
+      detectedCategory = "workout";
+    }
+
+    let rawRecommendations: { title: string; artist: string; genre: string; reason: string; matchScore: number }[] = [];
+
+    const songRadioSchema = {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          title: { type: Type.STRING },
+          artist: { type: Type.STRING },
+          genre: { type: Type.STRING },
+          reason: { type: Type.STRING },
+          matchScore: { type: Type.NUMBER }
+        },
+        required: ["title", "artist", "genre", "reason", "matchScore"]
+      }
+    };
+
+    const prompt = `You are the Spotify-grade Song Radio recommendation engine.
+A user is playing the seed track: "${title}" by "${artist}" (Genre/Theme: ${genre || detectedTheme}).
+
+CRITICAL CONSTRAINT: You MUST recommend ONLY songs that belong to the EXACT SAME musical genre, mood, cultural sphere, and sonic ecosystem.
+- If the seed track is Arabesk/Damar (e.g. Müslüm Gürses, Ferdi Tayfur, Bergen, Azer Bülbül, Cengiz Kurtoğlu, İbrahim Tatlıses, Ebru Gündeş, etc.), EVERY recommendation MUST be pure Turkish Arabesk, Damar, or classic emotional tavern/fantezi music. Under NO CIRCUMSTANCES recommend pop, rap, EDM, or synthwave songs!
+- If the seed track is Turkish Rock (e.g. Duman, Mor ve Ötesi, Şebnem Ferah, Teoman, Barış Manço, etc.), EVERY recommendation MUST be Turkish Rock or Anadolu Rock.
+- If the seed track is Turkish Rap (e.g. Ceza, Sagopa Kajmer, Ezhel, Uzi, Motive, etc.), EVERY recommendation MUST be Turkish Rap / Hip-Hop.
+- If the seed track is Synthwave (e.g. The Weeknd, Kavinsky, M83), recommend 80s synthwave/retrowave tracks.
+- If the seed track is Turkish Pop (e.g. Mert Demir, Mabel Matiz, KÖFN, Tarkan, Sezen Aksu), recommend contemporary Turkish pop/synth-pop hits.
+
+Generate exactly ${requestedCount} genuine, widely popular, real songs.
+Exclude any of these titles if present: ${excludeTitles.join(", ")}.
+
+Provide a valid JSON array where each object has:
+- "title": exact song title
+- "artist": artist name
+- "genre": primary subgenre
+- "reason": concise Turkish explanation of why this song seamlessly flows with "${title}" (e.g. "${artist} sevenler için aynı arabesk damar ruhu", "Benzer elektro-bağlama ve yaylı aranjmanı")
+- "matchScore": number between 90 and 99`;
+
+    const aiResult = await generateJsonWithGemini<{ title: string; artist: string; genre: string; reason: string; matchScore: number }[]>(
+      prompt,
+      songRadioSchema
+    );
+
+    if (Array.isArray(aiResult) && aiResult.length > 0) {
+      rawRecommendations = aiResult;
+    }
+
+    // Strict Curated Thematic Fallback pools
+    if (rawRecommendations.length === 0) {
+      if (detectedCategory === "arabesk") {
+        rawRecommendations = [
+          { title: "Affet", artist: "Müslüm Gürses", genre: "Arabesk / Rock", reason: "Müslüm Gürses'in unutulmaz duygu yüklü yorumu ve derin arabesk teması.", matchScore: 99 },
+          { title: "Nilüfer", artist: "Müslüm Gürses", genre: "Arabesk / Damar", reason: "Müslüm Baba klasiği, yoğun keman ve akustik yaylı tınıları.", matchScore: 98 },
+          { title: "Ben De Özledim", artist: "Ferdi Tayfur", genre: "Arabesk / Damar", reason: "Ferdi Tayfur'un efsanevi melodik bağlama ve aşk nağmeleri.", matchScore: 97 },
+          { title: "Sen Affetsen Ben Affetmem", artist: "Bergen", genre: "Arabesk / Damar", reason: "Bergen'in içe işleyen güçlü arabesk yorumu.", matchScore: 98 },
+          { title: "Duygularım", artist: "Azer Bülbül", genre: "Arabesk / Damar", reason: "Azer Bülbül'ün benzersiz titreyen vokal tarzı ve damar ritimleri.", matchScore: 96 },
+          { title: "Duyanlara Duymayanlara", artist: "Cengiz Kurtoğlu", genre: "Taverna / Arabesk", reason: "Taverna ve arabesk müziğin en büyük klasiklerinden.", matchScore: 97 },
+          { title: "Haydi Söyle", artist: "İbrahim Tatlıses", genre: "Arabesk / Fantezi", reason: "İmparator'un güçlü vokali ve zengin doğu aranjmanı.", matchScore: 95 },
+          { title: "Kum Gibi", artist: "Ahmet Kaya", genre: "Özgün Müzik / Damar", reason: "Derin sözler, akustik gitar ve bağlamanın eşsiz uyumu.", matchScore: 96 },
+          { title: "Delikanlım", artist: "Yıldız Tilbe", genre: "Arabesk / Pop", reason: "Yıldız Tilbe'nin samimi ve tutkulu arabesk nağmeleri.", matchScore: 97 },
+          { title: "Bana Sor", artist: "Ferdi Tayfur", genre: "Arabesk / Damar", reason: "Gözyaşı ve hasret temalı klasik Ferdi Tayfur bestesi.", matchScore: 95 }
+        ];
+      } else if (detectedCategory === "rock") {
+        rawRecommendations = [
+          { title: "Bir Derdim Var", artist: "Mor ve Ötesi", genre: "Türkçe Rock", reason: "Enerjik gitarlar ve felsefi sözlerle Türk rock müziğinin başyapıtı.", matchScore: 99 },
+          { title: "Aman Aman", artist: "Duman", genre: "Türkçe Rock", reason: "Kaan Tangöze'nin karakteristik vokali ve güçlü distortion tonları.", matchScore: 98 },
+          { title: "Sil Baştan", artist: "Şebnem Ferah", genre: "Türkçe Rock", reason: "Şebnem Ferah'ın büyüleyici vokali ve epik solo geçişleri.", matchScore: 97 },
+          { title: "Paramparça", artist: "Teoman", genre: "Türkçe Rock", reason: "Şehir hayatının melankolisini yansıtan zamansız bir Teoman klasiği.", matchScore: 96 },
+          { title: "Bir Kadın Çizeceksin", artist: "maNga", genre: "Nu-Metal / Rock", reason: "Ney ezgileri ile sert elektro gitar rifflerinin harmanı.", matchScore: 96 },
+          { title: "Gülpembe", artist: "Barış Manço", genre: "Anadolu Rock", reason: "Anadolu rock tarihinin en etkileyici melodilerinden biri.", matchScore: 98 },
+          { title: "Resimdeki Gözyaşları", artist: "Cem Karaca", genre: "Anadolu Rock", reason: "Cem Karaca'nın teatral ve güçlü sesiyle unutulmaz başyapıt.", matchScore: 97 },
+          { title: "Seni Dert Etmeler", artist: "Madrigal", genre: "Indie Rock", reason: "Modern alternatif rock tınıları ve akıcı bas yürüyüşleri.", matchScore: 95 }
+        ];
+      } else if (detectedCategory === "rap") {
+        rawRecommendations = [
+          { title: "Suspus", artist: "Ceza", genre: "Türkçe Rap", reason: "Hızlı flow ve teknik kafiyelerle Türkçe rapin zirve eseri.", matchScore: 99 },
+          { title: "Neyim Var Ki", artist: "Ceza ft. Sagopa Kajmer", genre: "Türkçe Rap", reason: "Tarihin en çok dinlenen kült rap düeti.", matchScore: 99 },
+          { title: "Geceler", artist: "Ezhel", genre: "Trap / Reggae", reason: "Ezhel'in çığır açan melodik trap ve autotune vokalleri.", matchScore: 97 },
+          { title: "Krvn", artist: "Uzi", genre: "Drill / Trap", reason: "Sert ritimler ve sokak anlatımıyla son dönemin en büyük hiti.", matchScore: 96 },
+          { title: "10MG", artist: "Motive", genre: "Modern Trap", reason: "Kusursuz ritim kalıpları ve modern 808 baslar.", matchScore: 96 },
+          { title: "Ölüler Dirilerden Çalacak", artist: "Gazapizm", genre: "Türkçe Rap", reason: "Sert beat ve toplumsal temalı vurucu sözler.", matchScore: 95 },
+          { title: "Vur Vur", artist: "Blok3", genre: "Drill / Rap", reason: "Enerjik ritimler ve akılda kalıcı nakarat.", matchScore: 94 }
+        ];
+      } else if (detectedCategory === "synthwave") {
+        rawRecommendations = [
+          { title: "Save Your Tears", artist: "The Weeknd", genre: "Synthwave / Pop", reason: "Blinding Lights ile kusursuz uyum sağlayan 80'ler retro synth ritimleri.", matchScore: 99 },
+          { title: "Nightcall", artist: "Kavinsky", genre: "Synthwave", reason: "Gece sürüşü ve analog synthesizer tınılarının öncüsü.", matchScore: 98 },
+          { title: "Midnight City", artist: "M83", genre: "Electronic / Synth", reason: "Görkemli saksafon solosu ve retro synthesizer katmanları.", matchScore: 97 },
+          { title: "Get Lucky", artist: "Daft Punk", genre: "Nu-Disco / Funk", reason: "Daft Punk ve Nile Rodgers'tan dans ettiren funk ritimleri.", matchScore: 96 }
+        ];
+      } else {
+        // Pop fallback
+        rawRecommendations = [
+          { title: "Karakol", artist: "Mabel Matiz", genre: "Türkçe Pop", reason: "Zengin synthesizer ve ud tınılarının modern pop ile buluşması.", matchScore: 98 },
+          { title: "Ateşe Düştüm", artist: "Mert Demir", genre: "Akustik / Pop", reason: "Mert Demir'in samimi vokal tarzı ve akustik gitar altyapısı.", matchScore: 98 },
+          { title: "Bi' Tek Ben Anlarım", artist: "KÖFN", genre: "Synth Pop", reason: "Ritmik davullar ve akılda kalıcı modern synthesizer riffleri.", matchScore: 97 },
+          { title: "Şımarık", artist: "Tarkan", genre: "Türkçe Pop", reason: "Megastar Tarkan'ın enerjik ritmi ve dünya çapında bilinen melodisi.", matchScore: 96 },
+          { title: "Aşkın Olayım", artist: "Simge", genre: "Türkçe Pop", reason: "Duygusal nakarat ve güçlü orkestrasyon.", matchScore: 97 }
+        ];
+      }
+    }
+
+    // Filter out seed track and excluded titles
+    const filteredRecs = rawRecommendations.filter(
+      r => r.title.toLowerCase() !== title.toLowerCase() && !excludeTitles.some(et => et.toLowerCase() === r.title.toLowerCase())
+    );
+
+    const finalRecs = (filteredRecs.length > 0 ? filteredRecs : rawRecommendations).slice(0, requestedCount);
+
+    // Multi-source enrichment with iTunes & YouTube Video IDs
+    const enrichedTracks = await Promise.all(
+      finalRecs.map(async (rec, idx) => {
+        let coverUrl = 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80';
+        let audioUrl = '';
+        let youtubeId: string | undefined = undefined;
+        let duration = 210;
+        let album = rec.title;
+
+        try {
+          const itunesMatch = await searchItunesSong(rec.title, rec.artist);
+          if (itunesMatch) {
+            if (itunesMatch.coverUrl) coverUrl = itunesMatch.coverUrl;
+            if (itunesMatch.previewUrl) audioUrl = itunesMatch.previewUrl;
+            if (itunesMatch.duration) duration = itunesMatch.duration;
+            if (itunesMatch.album) album = itunesMatch.album;
+          }
+
+          const ytMatch = await searchFullSongVideoId(rec.title, rec.artist);
+          if (ytMatch && ytMatch.youtubeId) {
+            youtubeId = ytMatch.youtubeId;
+            if (ytMatch.duration) duration = ytMatch.duration;
+          }
+        } catch (enrichErr) {
+          console.warn("Song radio track enrichment warning:", rec.title, enrichErr);
+        }
+
+        return {
+          id: `radio_${Date.now()}_${idx}`,
+          title: rec.title,
+          artist: rec.artist,
+          album: album || rec.title,
+          duration: duration || 210,
+          coverUrl: coverUrl,
+          audioUrl: audioUrl,
+          youtubeId: youtubeId,
+          startOffset: 0,
+          source: 'stream' as const,
+          genre: rec.genre || detectedTheme,
+          recommendationReason: rec.reason,
+          matchScore: rec.matchScore || Math.floor(Math.random() * 8 + 92),
+          addedAt: new Date().toISOString()
+        };
+      })
+    );
+
+    const responseData = {
+      seedTrack: { title, artist, genre },
+      radioTitle: `📻 ${artist || title} Şarkı Radyosu`,
+      themeName: detectedTheme,
+      tracks: enrichedTracks,
+      generatedAt: new Date().toISOString()
+    };
+
+    setCached(recommendationsCache, radioCacheKey, responseData);
+    res.json(responseData);
+  } catch (err: any) {
+    console.error("Radio track API error:", err);
+    res.status(500).json({ error: err.message || "Şarkı radyosu oluşturulamadı." });
+  }
+});
+
 // Smart AI Music Recommendation Service (Gemini 3.7 Flash + Multi-Source Resolver)
 app.post("/api/recommendations/smart", async (req, res) => {
   try {
-    const { history = [], topGenres = [], topArtists = [], mood = 'all', count = 8, playlistTracks = [] } = req.body;
+    const { history = [], topGenres = [], topArtists = [], mood = 'all', count = 8, playlistTracks = [], currentTrack = null } = req.body;
 
     const requestedCount = Math.min(Math.max(Number(count) || 8, 3), 15);
-    const recCacheKey = `${mood}_${requestedCount}_${topGenres.slice(0, 3).join('_')}_${topArtists.slice(0, 3).join('_')}_${(playlistTracks[0]?.title || '')}`;
+    const currentTrackTitle = currentTrack?.title || playlistTracks[0]?.title || '';
+    const recCacheKey = `${mood}_${requestedCount}_${topGenres.slice(0, 3).join('_')}_${topArtists.slice(0, 3).join('_')}_${currentTrackTitle}`;
     const cachedRecs = getCached(recommendationsCache, recCacheKey);
     if (cachedRecs) {
       return res.json(cachedRecs);
@@ -713,17 +1041,31 @@ app.post("/api/recommendations/smart", async (req, res) => {
 
     let rawRecommendations: { title: string; artist: string; genre: string; reason: string; matchScore: number }[] = [];
 
-    const ai = getGenAI();
-    if (ai) {
-      try {
-        const historyText = history.slice(0, 10).map((h: any) => `${h.title} - ${h.artist} (${h.genre || 'Müzik'})`).join(", ");
-        const playlistText = playlistTracks.slice(0, 10).map((t: any) => `${t.title} - ${t.artist}`).join(", ");
-        const artistsText = topArtists.slice(0, 6).join(", ");
-        const genresText = topGenres.slice(0, 5).join(", ");
+    const historyText = history.slice(0, 10).map((h: any) => `${h.title} - ${h.artist} (${h.genre || 'Müzik'})`).join(", ");
+    const playlistText = playlistTracks.slice(0, 10).map((t: any) => `${t.title} - ${t.artist}`).join(", ");
+    const artistsText = topArtists.slice(0, 6).join(", ");
+    const genresText = topGenres.slice(0, 5).join(", ");
+    const currentPlayingText = currentTrack ? `Currently Playing Seed Track: "${currentTrack.title}" by "${currentTrack.artist}" (${currentTrack.genre || 'Müzik'}). Prioritize songs matching this exact theme and mood!` : '';
 
-        const prompt = `You are a world-class music curator and personalized recommendation engine for SoundPulse music player.
+    const recSchema = {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          title: { type: Type.STRING },
+          artist: { type: Type.STRING },
+          genre: { type: Type.STRING },
+          reason: { type: Type.STRING },
+          matchScore: { type: Type.NUMBER }
+        },
+        required: ["title", "artist", "genre", "reason", "matchScore"]
+      }
+    };
+
+    const prompt = `You are a world-class music curator and personalized recommendation engine for SoundPulse music player.
 Analyze the user's listening profile and generate exactly ${requestedCount} diverse, real, existing, high-quality song recommendations.
 
+${currentPlayingText}
 User Listening History: ${historyText || "Antidepresan (Mert Demir), Bi' Tek Ben Anlarım (KÖFN), Gülpembe (Barış Manço), Blinding Lights (The Weeknd)"}
 Target Playlist (if any): ${playlistText || "Genel Müzik Listesi"}
 Favorite Artists: ${artistsText || "Mert Demir, KÖFN, Barış Manço, The Weeknd"}
@@ -732,46 +1074,23 @@ Current Mood Filter: ${mood}
 
 Guidelines:
 1. Recommend real, widely known songs by authentic artists.
-2. For each recommendation, provide:
+2. If a currently playing track is specified (e.g. Arabesk by Müslüm Gürses, Rock by Duman, Rap by Ceza), ensure the recommended songs strictly align with that musical genre and vibe without jarring cross-genre jumps.
+3. For each recommendation, provide:
    - "title": Exact original song title
    - "artist": Artist name
-   - "genre": Primary genre (e.g. Türkçe Pop, Synthwave, Rock, Lo-Fi, Akustik, R&B)
-   - "reason": Short, appealing explanation in Turkish why this song fits their taste (e.g., "KÖFN ve Mabel Matiz dinlediğiniz için benzer 80'ler synth-pop dokusu", "Mert Demir tarzı samimi akustik vokal")
+   - "genre": Primary genre (e.g. Arabesk, Türkçe Rock, Türkçe Pop, Türkçe Rap, Synthwave, Lo-Fi)
+   - "reason": Short, appealing explanation in Turkish why this song fits their taste
    - "matchScore": Match percentage between 85 and 99
-3. Do not include songs that are already in the target playlist or recently played history.
-4. Output valid JSON array.`;
+4. Do not include songs that are already in the target playlist or recently played history.
+5. Output valid JSON array.`;
 
-        const aiResponse = await ai.models.generateContent({
-          model: "gemini-3.7-flash",
-          contents: prompt,
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING },
-                  artist: { type: Type.STRING },
-                  genre: { type: Type.STRING },
-                  reason: { type: Type.STRING },
-                  matchScore: { type: Type.NUMBER }
-                },
-                required: ["title", "artist", "genre", "reason", "matchScore"]
-              }
-            }
-          }
-        });
+    const aiResult = await generateJsonWithGemini<{ title: string; artist: string; genre: string; reason: string; matchScore: number }[]>(
+      prompt,
+      recSchema
+    );
 
-        if (aiResponse.text) {
-          const parsed = JSON.parse(aiResponse.text.trim());
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            rawRecommendations = parsed;
-          }
-        }
-      } catch (geminiErr) {
-        console.warn("Gemini recommendation error, using heuristic fallback:", geminiErr);
-      }
+    if (Array.isArray(aiResult) && aiResult.length > 0) {
+      rawRecommendations = aiResult;
     }
 
     // Heuristic & Curated Fallback if Gemini returned empty or was unavailable

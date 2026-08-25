@@ -1,6 +1,7 @@
 import React, { useState, memo } from 'react';
-import { Play, Pause, SkipBack, SkipForward, Repeat, Shuffle, Volume2, VolumeX, Maximize2, Mic2, ListMusic, Sliders, WifiOff, HardDrive, Repeat1, Radio } from 'lucide-react';
-import { Track, RepeatMode, AudioSettings } from '../../types';
+import { Play, Pause, SkipBack, SkipForward, Repeat, Shuffle, Volume2, VolumeX, Maximize2, Mic2, ListMusic, Sliders, WifiOff, HardDrive, Repeat1, Radio, Sparkles } from 'lucide-react';
+import { Track, RepeatMode, ShuffleMode, AudioSettings } from '../../types';
+import { detectTrackTheme } from '../../services/recommendationService';
 
 interface PlayerBarProps {
   currentTrack: Track | null;
@@ -9,10 +10,12 @@ interface PlayerBarProps {
   duration: number;
   repeatMode: RepeatMode;
   isShuffle: boolean;
+  shuffleMode?: ShuffleMode;
   isABActive: boolean;
   volume: number;
   isMuted: boolean;
   isOfflineMode: boolean;
+  isRadioActive?: boolean;
   onTogglePlay: () => void;
   onPrev: () => void;
   onNext: () => void;
@@ -26,6 +29,7 @@ interface PlayerBarProps {
   onOpenQueue: () => void;
   onOpenEqualizer: () => void;
   onOpenOfflineManager: () => void;
+  onStartSongRadio?: (track: Track) => void;
 }
 
 export const PlayerBar: React.FC<PlayerBarProps> = memo(({
@@ -35,10 +39,12 @@ export const PlayerBar: React.FC<PlayerBarProps> = memo(({
   duration,
   repeatMode,
   isShuffle,
+  shuffleMode = isShuffle ? 'smart' : 'off',
   isABActive,
   volume,
   isMuted,
   isOfflineMode,
+  isRadioActive = false,
   onTogglePlay,
   onPrev,
   onNext,
@@ -51,7 +57,8 @@ export const PlayerBar: React.FC<PlayerBarProps> = memo(({
   onOpenFullPlayer,
   onOpenQueue,
   onOpenEqualizer,
-  onOpenOfflineManager
+  onOpenOfflineManager,
+  onStartSongRadio
 }) => {
   const [isHoveringSeek, setIsHoveringSeek] = useState(false);
 
@@ -62,7 +69,7 @@ export const PlayerBar: React.FC<PlayerBarProps> = memo(({
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
-  const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const currentTheme = currentTrack ? detectTrackTheme(currentTrack) : null;
 
   return (
     <div className="h-20 md:h-22 bg-neutral-950/95 border-t border-neutral-800/80 px-4 md:px-6 flex items-center justify-between z-40 backdrop-blur-lg select-none">
@@ -85,19 +92,33 @@ export const PlayerBar: React.FC<PlayerBarProps> = memo(({
             </div>
 
             <div className="min-w-0 pr-2">
-              <div
-                onClick={onOpenFullPlayer}
-                className="text-xs md:text-sm font-bold text-white truncate cursor-pointer hover:underline"
-              >
-                {currentTrack.title}
+              <div className="flex items-center gap-1.5">
+                <div
+                  onClick={onOpenFullPlayer}
+                  className="text-xs md:text-sm font-bold text-white truncate cursor-pointer hover:underline"
+                >
+                  {currentTrack.title}
+                </div>
+                {isRadioActive && (
+                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-0.5">
+                    <Radio className="w-2.5 h-2.5" /> Radyo
+                  </span>
+                )}
               </div>
               <div className="text-[11px] text-neutral-400 truncate hover:text-neutral-200 cursor-pointer">
                 {currentTrack.artist}
               </div>
-              {currentTrack.isOfflineCached && (
-                <span className="inline-flex items-center gap-1 text-[9px] font-bold text-emerald-400 mt-0.5">
-                  <HardDrive className="w-2.5 h-2.5" /> İndirildi
-                </span>
+              {currentTheme && (
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <span className={`inline-flex items-center gap-1 text-[9px] font-medium px-1.5 py-0.2 rounded border ${currentTheme.color}`}>
+                    {currentTheme.displayName}
+                  </span>
+                  {currentTrack.isOfflineCached && (
+                    <span className="inline-flex items-center gap-1 text-[9px] font-bold text-emerald-400">
+                      <HardDrive className="w-2.5 h-2.5" /> İndirildi
+                    </span>
+                  )}
+                </div>
               )}
             </div>
           </>
@@ -112,12 +133,25 @@ export const PlayerBar: React.FC<PlayerBarProps> = memo(({
         <div className="flex items-center gap-3 md:gap-5 mb-1.5">
           <button
             onClick={onToggleShuffle}
-            className={`p-1.5 rounded-full transition ${
-              isShuffle ? 'text-emerald-400' : 'text-neutral-400 hover:text-white'
+            className={`p-1.5 rounded-full transition relative flex items-center justify-center ${
+              shuffleMode === 'smart'
+                ? 'text-emerald-400 bg-emerald-500/10'
+                : shuffleMode === 'random'
+                ? 'text-cyan-400 bg-cyan-500/10'
+                : 'text-neutral-400 hover:text-white'
             }`}
-            title="Karışık Çal"
+            title={
+              shuffleMode === 'smart'
+                ? '✨ Akıllı Tematik Karışık Çalma (Aynı tarz & tema şarkıları çalar)'
+                : shuffleMode === 'random'
+                ? '🔀 Rastgele Karışık Çalma'
+                : 'Karışık Çalma Kapalı'
+            }
           >
             <Shuffle className="w-4 h-4" />
+            {shuffleMode === 'smart' && (
+              <span className="absolute -top-1 -right-1 text-[8px] font-black text-emerald-400">✨</span>
+            )}
           </button>
 
           <button
@@ -160,6 +194,16 @@ export const PlayerBar: React.FC<PlayerBarProps> = memo(({
           >
             {repeatMode === 'one' ? <Repeat1 className="w-4 h-4" /> : <Repeat className="w-4 h-4" />}
           </button>
+
+          {currentTrack && onStartSongRadio && (
+            <button
+              onClick={() => onStartSongRadio(currentTrack)}
+              className="hidden lg:flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-neutral-900 border border-neutral-700 text-neutral-300 hover:text-white hover:border-emerald-500/50 transition"
+              title="Bu şarkının tarzında sonsuz radyo başlat"
+            >
+              <Radio className="w-3.5 h-3.5 text-amber-400" /> Şarkı Radyosu
+            </button>
+          )}
         </div>
 
         {/* Scrub Bar */}

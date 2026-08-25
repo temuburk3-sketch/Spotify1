@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Play, Pause, SkipBack, SkipForward, Repeat, Shuffle, Volume2, Mic2, Activity, Sliders, ChevronDown, Flame, BookmarkCheck } from 'lucide-react';
-import { Track, RepeatMode, AudioSettings } from '../../types';
+import { X, Play, Pause, SkipBack, SkipForward, Repeat, Shuffle, Volume2, Mic2, Activity, Sliders, ChevronDown, Flame, BookmarkCheck, Radio, Sparkles, Repeat1 } from 'lucide-react';
+import { Track, RepeatMode, ShuffleMode, AudioSettings } from '../../types';
 import { AudioVisualizer } from './AudioVisualizer';
 import { audioEngine } from '../../services/audioEngine';
+import { detectTrackTheme } from '../../services/recommendationService';
 
 interface FullPlayerModalProps {
   isOpen: boolean;
@@ -14,7 +15,9 @@ interface FullPlayerModalProps {
   duration: number;
   repeatMode: RepeatMode;
   isShuffle: boolean;
+  shuffleMode?: ShuffleMode;
   isABActive: boolean;
+  isRadioActive?: boolean;
   onTogglePlay: () => void;
   onPrev: () => void;
   onNext: () => void;
@@ -23,6 +26,7 @@ interface FullPlayerModalProps {
   onToggleShuffle: () => void;
   onToggleABLoop: () => void;
   onOpenEqualizer: () => void;
+  onStartSongRadio?: (track: Track) => void;
 }
 
 export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
@@ -34,7 +38,9 @@ export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
   duration,
   repeatMode,
   isShuffle,
+  shuffleMode = isShuffle ? 'smart' : 'off',
   isABActive,
+  isRadioActive = false,
   onTogglePlay,
   onPrev,
   onNext,
@@ -42,12 +48,15 @@ export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
   onToggleRepeat,
   onToggleShuffle,
   onToggleABLoop,
-  onOpenEqualizer
+  onOpenEqualizer,
+  onStartSongRadio
 }) => {
   const [activeTab, setActiveTab] = useState<'cover' | 'lyrics'>('cover');
   const lyricsContainerRef = useRef<HTMLDivElement | null>(null);
 
   if (!isOpen || !track) return null;
+
+  const currentTheme = detectTrackTheme(track);
 
   const timedLyrics = track.timedLyrics || [
     { time: 0, text: '🎵 ' + track.title },
@@ -133,8 +142,31 @@ export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
             <div className="mb-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight">{track.title}</h1>
+                  <div className="flex items-center gap-2">
+                    <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight">{track.title}</h1>
+                    {isRadioActive && (
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                        <Radio className="w-3 h-3" /> Radyo Aktif
+                      </span>
+                    )}
+                  </div>
                   <p className="text-sm md:text-base font-semibold text-emerald-400 mt-1">{track.artist}</p>
+                  {currentTheme && (
+                    <div className="mt-2 flex items-center gap-2">
+                      <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full border ${currentTheme.color}`}>
+                        {currentTheme.displayName}
+                      </span>
+                      {onStartSongRadio && (
+                        <button
+                          onClick={() => onStartSongRadio(track)}
+                          className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-neutral-900 border border-neutral-700 hover:border-amber-400/60 text-amber-300 transition"
+                          title="Bu şarkının tarzında sonsuz radyo akışı başlat"
+                        >
+                          <Radio className="w-3 h-3" /> Şarkı Radyosunu Başlat
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -204,12 +236,25 @@ export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
           <div className="flex items-center justify-between">
             <button
               onClick={onToggleShuffle}
-              className={`p-2 rounded-full transition ${
-                isShuffle ? 'text-emerald-400 bg-emerald-500/10' : 'text-neutral-400 hover:text-white'
+              className={`p-2 rounded-full transition relative flex items-center justify-center ${
+                shuffleMode === 'smart'
+                  ? 'text-emerald-400 bg-emerald-500/10'
+                  : shuffleMode === 'random'
+                  ? 'text-cyan-400 bg-cyan-500/10'
+                  : 'text-neutral-400 hover:text-white'
               }`}
-              title="Karışık Çal"
+              title={
+                shuffleMode === 'smart'
+                  ? '✨ Akıllı Tematik Karışık Çalma (Aynı tarz & tema şarkıları çalar)'
+                  : shuffleMode === 'random'
+                  ? '🔀 Rastgele Karışık Çalma'
+                  : 'Karışık Çalma Kapalı'
+              }
             >
               <Shuffle className="w-5 h-5" />
+              {shuffleMode === 'smart' && (
+                <span className="absolute -top-0.5 -right-0.5 text-[9px] font-black text-emerald-400">✨</span>
+              )}
             </button>
 
             <div className="flex items-center gap-4">

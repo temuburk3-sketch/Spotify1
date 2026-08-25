@@ -115,3 +115,4 @@ export interface AudioSettings {
 }
 
 export type RepeatMode = 'off' | 'all' | 'one';
+export type ShuffleMode = 'off' | 'smart' | 'random';

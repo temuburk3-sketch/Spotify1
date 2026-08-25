@@ -20,7 +20,7 @@ import { JoinRoomModal } from './components/Playlist/JoinRoomModal';
 import { InstallModal } from './components/InstallModal';
 import { usePWAInstall } from './hooks/usePWAInstall';
 
-import { Playlist, Track, RepeatMode, AudioSettings } from './types';
+import { Playlist, Track, RepeatMode, ShuffleMode, AudioSettings } from './types';
 import { DEFAULT_PLAYLISTS } from './data/defaultPlaylists';
 import { audioEngine } from './services/audioEngine';
 import {
@@ -33,7 +33,12 @@ import {
   recordListeningEvent,
   isAppLocked,
   getEndlessAutoplay,
-  fetchSmartRecommendations
+  fetchSmartRecommendations,
+  fetchThematicSongRadio,
+  selectSmartThematicNextTrack,
+  detectTrackTheme,
+  getSmartShuffleEnabled,
+  setSmartShuffleEnabled
 } from './services/recommendationService';
 import { collabManager } from './services/collaboration';
 import confetti from 'canvas-confetti';
@@ -53,7 +58,10 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [duration, setDuration] = useState<number>(0);
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('off');
-  const [isShuffle, setIsShuffle] = useState<boolean>(false);
+  const [shuffleMode, setShuffleMode] = useState<ShuffleMode>(() => getSmartShuffleEnabled() ? 'smart' : 'off');
+  const [isRadioActive, setIsRadioActive] = useState<boolean>(false);
+  const [radioThemeName, setRadioThemeName] = useState<string>('');
+  const [playedTrackIds, setPlayedTrackIds] = useState<Set<string>>(new Set());
   const [queue, setQueue] = useState<Track[]>([]);
   const [isABActive, setIsABActive] = useState<boolean>(false);
   const [sleepTimerMins, setSleepTimerMins] = useState<number | null>(null);
@@ -252,11 +260,7 @@ export default function App() {
         handlersRef.current.handleNextTrack();
       },
       onError: (err) => {
-        console.warn('Audio playback issue, attempting auto-advance:', err);
-        // If track playback encounters an unrecoverable issue, advance safely to next song
-        setTimeout(() => {
-          handlersRef.current.handleNextTrack();
-        }, 1200);
+        console.warn('Audio playback notice (retained in current track):', err);
       }
     });
 
@@ -304,17 +308,51 @@ export default function App() {
   }, [sleepTimerMins]);
 
   // Playback Control Handlers
-  const handlePlayTrack = async (track: Track) => {
+  const handlePlayTrack = (track: Track) => {
     try {
+      // Track played songs to avoid repeating in shuffle mode
+      setPlayedTrackIds(prev => {
+        const updated = new Set(prev);
+        updated.add(track.id);
+        return updated;
+      });
+
       // Record listening event for smart recommendations
       recordListeningEvent(track, 45, false);
       setCurrentTrack(track);
       setCurrentTime(track.startOffset || 0);
       setDuration(track.duration || 180);
-      await audioEngine.playTrack(track, track.startOffset || 0);
       setIsPlaying(true);
+      
+      // Fire audio engine immediately without blocking the UI
+      audioEngine.playTrack(track, track.startOffset || 0).catch(() => {});
     } catch (err) {
-      console.warn('Playback triggered synth fallback or recovery');
+      console.warn('Playback notice:', err);
+    }
+  };
+
+  // Spotify-style "Start Song Radio" feature
+  const handleStartSongRadio = (seedTrack: Track) => {
+    try {
+      const theme = detectTrackTheme(seedTrack);
+      setIsRadioActive(true);
+      setRadioThemeName(theme.displayName);
+      showToast(`📻 "${seedTrack.artist || seedTrack.title}" Radyosu Başlatıldı (${theme.displayName})`);
+
+      // Play the seed track immediately in 0ms
+      handlePlayTrack(seedTrack);
+
+      // Fetch thematic radio tracks in background without blocking playback
+      fetchThematicSongRadio(seedTrack, 10).then(radioResult => {
+        if (radioResult.tracks && radioResult.tracks.length > 0) {
+          const queueTracks = radioResult.tracks.filter(t => t.id !== seedTrack.id);
+          setQueue(queueTracks);
+        }
+      }).catch((err) => {
+        console.warn('Song radio fetch notice:', err);
+      });
+    } catch (error) {
+      console.warn('Failed to start song radio:', error);
     }
   };
 
@@ -331,19 +369,19 @@ export default function App() {
       audioEngine.pause();
       setIsPlaying(false);
     } else {
-      await audioEngine.resume();
+      audioEngine.resume().catch(() => {});
       setIsPlaying(true);
     }
   };
 
-  const handleNextTrack = async () => {
+  const handleNextTrack = () => {
     if (repeatMode === 'one' && currentTrack) {
       audioEngine.seek(0);
-      audioEngine.resume();
+      audioEngine.resume().catch(() => {});
       return;
     }
 
-    // If queue has items
+    // 1. If queue has items (e.g. from Song Radio or manual queue)
     if (queue.length > 0) {
       const nextFromQueue = queue[0];
       setQueue(prev => prev.slice(1));
@@ -351,42 +389,50 @@ export default function App() {
       return;
     }
 
-    // Next from active playlist
+    // Active playlist
     const activeList = playlists.find(p => p.id === activePlaylistId) || playlists[0];
     if (!activeList || activeList.tracks.length === 0) return;
 
-    if (isShuffle) {
-      const randomIdx = Math.floor(Math.random() * activeList.tracks.length);
-      handlePlayTrack(activeList.tracks[randomIdx]);
+    // 2. Smart Thematic Shuffle (Spotify-style vibe matching)
+    if (shuffleMode === 'smart' && currentTrack) {
+      const nextThematicTrack = selectSmartThematicNextTrack(
+        currentTrack,
+        activeList.tracks,
+        playedTrackIds
+      );
+
+      if (nextThematicTrack && nextThematicTrack.id !== currentTrack.id) {
+        handlePlayTrack(nextThematicTrack);
+        return;
+      }
+
+      // Reset played set if all have played
+      setPlayedTrackIds(new Set([currentTrack.id]));
+      const otherTracks = activeList.tracks.filter(t => t.id !== currentTrack.id);
+      if (otherTracks.length > 0) {
+        const randomIdx = Math.floor(Math.random() * otherTracks.length);
+        handlePlayTrack(otherTracks[randomIdx]);
+        return;
+      }
+    }
+
+    // 3. Random Shuffle Mode (Pure random across playlist)
+    if (shuffleMode === 'random') {
+      const unplayed = activeList.tracks.filter(t => !playedTrackIds.has(t.id));
+      const pool = unplayed.length > 0 ? unplayed : activeList.tracks;
+      const otherTracks = pool.filter(t => t.id !== currentTrack?.id);
+      const targetPool = otherTracks.length > 0 ? otherTracks : pool;
+      const randomIdx = Math.floor(Math.random() * targetPool.length);
+      handlePlayTrack(targetPool[randomIdx]);
       return;
     }
 
+    // 4. Sequential Playback Mode
     const currentIndex = activeList.tracks.findIndex(t => t.id === currentTrack?.id);
     if (currentIndex === -1 || currentIndex === activeList.tracks.length - 1) {
-      if (repeatMode === 'all') {
-        handlePlayTrack(activeList.tracks[0]);
-      } else if (getEndlessAutoplay()) {
-        // Endless Autoplay: fetch smart recommendations matching the active list & current track
-        showToast('📻 Sonsuz Akıllı Radyo: Benzer şarkı önerileri yükleniyor...');
-        try {
-          const recs = await fetchSmartRecommendations({
-            playlistTracks: activeList.tracks.map(t => ({ title: t.title, artist: t.artist, genre: t.genre })),
-            count: 4
-          });
-          if (recs.length > 0) {
-            handlePlayTrack(recs[0]);
-            if (recs.length > 1) {
-              setQueue(prev => [...prev, ...recs.slice(1)]);
-            }
-            return;
-          }
-        } catch (e) {
-          console.warn('Smart autoplay fallback:', e);
-        }
-        setIsPlaying(false);
-      } else {
-        setIsPlaying(false);
-      }
+      // Loop back to beginning or continue
+      setPlayedTrackIds(new Set());
+      handlePlayTrack(activeList.tracks[0]);
     } else {
       handlePlayTrack(activeList.tracks[currentIndex + 1]);
     }
@@ -420,9 +466,21 @@ export default function App() {
     setRepeatMode(modes[nextIdx]);
   };
 
+  // 3-way Shuffle Toggle: Off -> Smart Thematic (✨) -> Random (🔀) -> Off
   const handleToggleShuffle = () => {
-    setIsShuffle(!isShuffle);
-    showToast(!isShuffle ? '🔀 Karışık çalma açıldı' : 'Sıralı çalma modu');
+    if (shuffleMode === 'off') {
+      setShuffleMode('smart');
+      setSmartShuffleEnabled(true);
+      showToast('✨ Akıllı Tematik Karışık Çalma Açıldı (Aynı tür ve tema şarkıları çalar)');
+    } else if (shuffleMode === 'smart') {
+      setShuffleMode('random');
+      setSmartShuffleEnabled(false);
+      showToast('🔀 Standart Rastgele Karışık Çalma Açıldı');
+    } else {
+      setShuffleMode('off');
+      setSmartShuffleEnabled(false);
+      showToast('Sıralı Çalma Modu');
+    }
   };
 
   const handleToggleABLoop = () => {
@@ -435,7 +493,7 @@ export default function App() {
     } else {
       audioEngine.setABLoop(null, null, false);
       setIsABActive(false);
-      showToast('A-B Döngüsü kapatıldı');
+      showToast('A-B Döngüsü Kapatıldı');
     }
   };
 
@@ -462,7 +520,8 @@ export default function App() {
   const handlePlayPlaylist = (playlist: Playlist, shuffle = false) => {
     if (playlist.tracks.length === 0) return;
     setActivePlaylistId(playlist.id);
-    setIsShuffle(shuffle);
+    setShuffleMode(shuffle ? 'smart' : 'off');
+    setSmartShuffleEnabled(shuffle);
 
     if (shuffle) {
       const randomIdx = Math.floor(Math.random() * playlist.tracks.length);
@@ -719,6 +778,7 @@ export default function App() {
             }}
             onDownloadTrackOffline={handleDownloadTrackOffline}
             onDownloadAllOffline={handleDownloadAllOffline}
+            onStartSongRadio={handleStartSongRadio}
           />
         )}
 
@@ -731,6 +791,7 @@ export default function App() {
             onAddTrackToPlaylist={(track, targetId) => handleAddTracksToPlaylist([track], targetId)}
             onDownloadTrackOffline={handleDownloadTrackOffline}
             onOpenSpotifyImport={() => setIsSpotifyImportOpen(true)}
+            onStartSongRadio={handleStartSongRadio}
           />
         )}
 
@@ -747,6 +808,7 @@ export default function App() {
             }}
             onDownloadTrackOffline={handleDownloadTrackOffline}
             onOpenPrivateModeGuide={() => setIsPrivateModeOpen(true)}
+            onStartSongRadio={handleStartSongRadio}
           />
         )}
 
@@ -757,8 +819,10 @@ export default function App() {
           currentTime={currentTime}
           duration={duration}
           repeatMode={repeatMode}
-          isShuffle={isShuffle}
+          isShuffle={shuffleMode !== 'off'}
+          shuffleMode={shuffleMode}
           isABActive={isABActive}
+          isRadioActive={isRadioActive}
           volume={audioSettings.volume}
           isMuted={audioSettings.muted}
           isOfflineMode={isOfflineMode}
@@ -775,6 +839,7 @@ export default function App() {
           onOpenQueue={() => setIsQueueOpen(true)}
           onOpenEqualizer={() => setIsEqualizerOpen(true)}
           onOpenOfflineManager={() => setIsOfflineManagerOpen(true)}
+          onStartSongRadio={handleStartSongRadio}
         />
       </div>
 
@@ -787,8 +852,10 @@ export default function App() {
         currentTime={currentTime}
         duration={duration}
         repeatMode={repeatMode}
-        isShuffle={isShuffle}
+        isShuffle={shuffleMode !== 'off'}
+        shuffleMode={shuffleMode}
         isABActive={isABActive}
+        isRadioActive={isRadioActive}
         onTogglePlay={handleTogglePlay}
         onPrev={handlePrevTrack}
         onNext={handleNextTrack}
@@ -797,6 +864,7 @@ export default function App() {
         onToggleShuffle={handleToggleShuffle}
         onToggleABLoop={handleToggleABLoop}
         onOpenEqualizer={() => setIsEqualizerOpen(true)}
+        onStartSongRadio={handleStartSongRadio}
       />
 
       {currentActivePlaylist && (

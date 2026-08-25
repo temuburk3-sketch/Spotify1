@@ -23,6 +23,7 @@ interface PlaylistDetailProps {
   onAddToQueue: (track: Track) => void;
   onDownloadTrackOffline: (track: Track) => Promise<void>;
   onDownloadAllOffline: (playlist: Playlist) => Promise<void>;
+  onStartSongRadio?: (track: Track) => void;
 }
 
 export const PlaylistDetail: React.FC<PlaylistDetailProps> = memo(({
@@ -42,7 +43,8 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = memo(({
   onUpvoteTrack,
   onAddToQueue,
   onDownloadTrackOffline,
-  onDownloadAllOffline
+  onDownloadAllOffline,
+  onStartSongRadio
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'custom' | 'title' | 'artist' | 'duration' | 'upvotes'>('custom');
@@ -443,6 +445,20 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = memo(({
                           <ArrowDown className="w-3.5 h-3.5" />
                         </button>
                       </div>
+                    )}
+
+                    {/* Start Song Radio */}
+                    {onStartSongRadio && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onStartSongRadio(track);
+                        }}
+                        className="p-1.5 text-neutral-400 hover:text-amber-400 rounded-lg hover:bg-neutral-800 transition opacity-0 group-hover:opacity-100"
+                        title="Bu şarkının tarzında radyo başlat"
+                      >
+                        <Radio className="w-3.5 h-3.5" />
+                      </button>
                     )}
 
                     {/* Download offline */}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, memo } from 'react';
-import { Search, Play, Plus, HardDrive, Check, Music, Disc, Sparkles, Loader2, Volume2, Globe } from 'lucide-react';
+import { Search, Play, Plus, HardDrive, Check, Music, Disc, Sparkles, Loader2, Volume2, Globe, Radio } from 'lucide-react';
 import { Track, Playlist } from '../../types';
 
 interface SearchViewProps {
@@ -10,17 +10,19 @@ interface SearchViewProps {
   onAddTrackToPlaylist: (track: Track, playlistId: string) => void;
   onDownloadTrackOffline: (track: Track) => Promise<void>;
   onOpenSpotifyImport: () => void;
+  onStartSongRadio?: (track: Track) => void;
 }
 
 const clientSearchCache = new Map<string, Track[]>();
 
 const EXPLORE_GENRES = [
-  { name: 'Türkçe Pop', query: 'Türkçe Pop', color: 'from-emerald-600 to-teal-900', icon: '🇹🇷' },
-  { name: 'Lo-Fi & Chill', query: 'Lofi Chill', color: 'from-indigo-600 to-slate-900', icon: '☕' },
-  { name: 'Akustik & Huzur', query: 'Akustik Türkçe', color: 'from-amber-600 to-stone-900', icon: '🎸' },
-  { name: 'Gece Sürüşü', query: 'Synthwave Drive', color: 'from-purple-600 to-neutral-900', icon: '🌃' },
-  { name: 'Spor & Motivasyon', query: 'Workout Gym EDM', color: 'from-red-600 to-zinc-900', icon: '⚡' },
-  { name: 'Anadolu Rock', query: 'Anadolu Rock', color: 'from-blue-600 to-slate-900', icon: '🔥' },
+  { name: '🥀 Arabesk & Damar', query: 'Müslüm Gürses Ferdi Tayfur Arabesk', color: 'from-amber-700 to-rose-950', icon: '🥀' },
+  { name: '🇹🇷 Türkçe Pop', query: 'Türkçe Pop', color: 'from-emerald-600 to-teal-900', icon: '🇹🇷' },
+  { name: '🎸 Anadolu Rock', query: 'Barış Manço Duman Rock', color: 'from-blue-600 to-slate-900', icon: '🎸' },
+  { name: '🎤 Türkçe Rap', query: 'Türkçe Rap Hip Hop', color: 'from-orange-600 to-neutral-900', icon: '🎤' },
+  { name: '☕ Lo-Fi & Chill', query: 'Lofi Chill', color: 'from-indigo-600 to-slate-900', icon: '☕' },
+  { name: '🌃 Gece Sürüşü', query: 'Synthwave Drive', color: 'from-purple-600 to-neutral-900', icon: '🌃' },
+  { name: '⚡ Spor & Motivasyon', query: 'Workout Gym EDM', color: 'from-red-600 to-zinc-900', icon: '⚡' },
 ];
 
 const CURATED_TOP_HITS: Track[] = [
@@ -98,7 +100,8 @@ export const SearchView: React.FC<SearchViewProps> = memo(({
   onPlayTrack,
   onAddTrackToPlaylist,
   onDownloadTrackOffline,
-  onOpenSpotifyImport
+  onOpenSpotifyImport,
+  onStartSongRadio
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearchingOnline, setIsSearchingOnline] = useState(false);
@@ -313,6 +316,17 @@ export const SearchView: React.FC<SearchViewProps> = memo(({
                       <span className="text-[11px] font-mono text-neutral-400 hidden sm:inline mr-1">
                         {formatDuration(track.duration)}
                       </span>
+
+                      {/* Song Radio */}
+                      {onStartSongRadio && (
+                        <button
+                          onClick={() => onStartSongRadio(track)}
+                          className="flex items-center gap-1 px-2.5 py-1.5 bg-neutral-900 hover:bg-amber-500/20 text-neutral-300 hover:text-amber-400 rounded-xl text-xs font-bold border border-neutral-800 transition cursor-pointer"
+                          title="Bu şarkının tarzında radyo başlat"
+                        >
+                          <Radio className="w-3.5 h-3.5" /> <span className="hidden md:inline">Radyo</span>
+                        </button>
+                      )}
 
                       {/* Download offline */}
                       <button
