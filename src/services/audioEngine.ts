@@ -62,14 +62,16 @@ class AudioEngine {
     this.initYouTube().catch(() => {});
   }
 
-  // Silent audio keep-alive to keep mobile browsers (Android / iOS) from sleeping in the background
+  // Silent audio keep-alive & Web Audio pipeline to keep mobile browsers (Opera, Chrome, iOS) active in background
   private initSilentKeepAlive() {
     try {
-      // 1-second silent WAV base64
+      // High-compatibility silent WAV loop
       const silentWav = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
       this.silentAudio = new Audio(silentWav);
       this.silentAudio.loop = true;
       this.silentAudio.volume = 0.001;
+      this.silentAudio.setAttribute('playsinline', 'true');
+      this.silentAudio.setAttribute('webkit-playsinline', 'true');
     } catch {}
   }
 
@@ -98,10 +100,22 @@ class AudioEngine {
   private initVisibilityListener() {
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', () => {
-        if (!document.hidden && this.isPlaying()) {
-          // Re-sync position and wake lock on foreground return
-          this.acquireWakeLock().catch(() => {});
-          this.updateMediaSessionPosition(this.getCurrentTime(), this.getDuration());
+        if (document.hidden) {
+          // Tab backgrounded or screen locked
+          if (this.currentTrack && (this.activeMode === 'youtube' || this.isPlaying())) {
+            // Mobile browsers automatically pause YouTube iframes on screen lock.
+            // Seamlessly transfer to HTML5 audio stream at current timestamp so sound never dies!
+            if (this.activeMode === 'youtube') {
+              const cur = this.getCurrentTime();
+              this.playViaHtml5(this.currentTrack, cur).catch(() => {});
+            }
+          }
+        } else {
+          // Returned to foreground
+          if (this.isPlaying()) {
+            this.acquireWakeLock().catch(() => {});
+            this.updateMediaSessionPosition(this.getCurrentTime(), this.getDuration());
+          }
         }
       });
     }
@@ -234,6 +248,13 @@ class AudioEngine {
                       this.onPlayStateChangeCallback(true);
                     }
                   } else if (event.data === 2) {
+                    // 2: PAUSED
+                    // If the page is hidden (screen locked or tab minimized on mobile), transfer to HTML5 audio stream rather than stopping sound!
+                    if (typeof document !== 'undefined' && document.hidden && this.currentTrack) {
+                      const cur = this.getCurrentTime();
+                      this.playViaHtml5(this.currentTrack, cur).catch(() => {});
+                      return;
+                    }
                     this.clearYtInterval();
                     this.updateMediaSessionState('paused');
                     if (this.onPlayStateChangeCallback) {

@@ -318,8 +318,8 @@ async function resolveSpotifyUrl(url: string) {
           let nextUrl = pData.tracks?.next;
           let pages = 0;
 
-          // Paginate up to 500 tracks to import complete playlists
-          while (nextUrl && pages < 5) {
+          // Paginate up to 100 pages (up to 10,000 tracks) to import complete large playlists
+          while (nextUrl && pages < 100) {
             pages++;
             try {
               const nextRes = await fetch(nextUrl, { headers: { "Authorization": `Bearer ${token}` } });
@@ -338,16 +338,17 @@ async function resolveSpotifyUrl(url: string) {
           }
 
           const tracks = allItems
-            .filter((item: any) => item && item.track && item.track.id)
+            .filter((item: any) => item && (item.track || item.id))
             .map((item: any, idx: number) => {
-              const t = item.track;
-              const trkTitle = t.name;
+              const t = item.track || item;
+              const trkTitle = t.name || `Şarkı #${idx + 1}`;
               const trkArtist = t.artists?.map((a: any) => a.name).join(", ") || listAuthor;
               const trkCover = t.album?.images?.[0]?.url || listCover;
-              const trkDuration = t.duration_ms ? Math.round(t.duration_ms / 1000) : 190;
+              const trkDuration = t.duration_ms ? Math.round(t.duration_ms / 1000) : (t.duration ? Math.round(t.duration / 1000) : 190);
+              const trkId = t.id || `trk_${idx}`;
 
               return {
-                id: `sp_${t.id}_${idx}`,
+                id: `sp_${id}_${trkId}_${idx}`,
                 title: trkTitle,
                 artist: trkArtist,
                 album: t.album?.name || listTitle,
@@ -355,7 +356,7 @@ async function resolveSpotifyUrl(url: string) {
                 coverUrl: trkCover,
                 audioUrl: t.preview_url || `https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview122/v4/fb/3c/74/fb3c7480-781d-1830-3edd-fd15bdb23406/mzaf_17024654962565086082.plus.aac.p.m4a`,
                 source: 'spotify',
-                spotifyId: t.id,
+                spotifyId: trkId,
                 addedAt: new Date().toISOString(),
                 genre: 'Spotify Hit'
               };
@@ -379,18 +380,39 @@ async function resolveSpotifyUrl(url: string) {
           const albumTitle = aData.name || "Spotify Albümü";
           const albumAuthor = aData.artists?.map((a: any) => a.name).join(", ") || "Sanatçı";
           const albumCover = aData.images?.[0]?.url || "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600";
-          const items = aData.tracks?.items || [];
+          
+          let allAlbumItems: any[] = aData.tracks?.items || [];
+          let nextUrl = aData.tracks?.next;
+          let aPages = 0;
 
-          const tracks = items.map((t: any, idx: number) => ({
-            id: `sp_${t.id}_${idx}`,
-            title: t.name,
+          while (nextUrl && aPages < 30) {
+            aPages++;
+            try {
+              const nextRes = await fetch(nextUrl, { headers: { "Authorization": `Bearer ${token}` } });
+              if (nextRes.ok) {
+                const nextData = await nextRes.json();
+                if (Array.isArray(nextData.items)) {
+                  allAlbumItems.push(...nextData.items);
+                }
+                nextUrl = nextData.next;
+              } else {
+                break;
+              }
+            } catch {
+              break;
+            }
+          }
+
+          const tracks = allAlbumItems.map((t: any, idx: number) => ({
+            id: `sp_${id}_${t.id || 'alb'}_${idx}`,
+            title: t.name || `Şarkı #${idx + 1}`,
             artist: t.artists?.map((a: any) => a.name).join(", ") || albumAuthor,
             album: albumTitle,
             duration: t.duration_ms ? Math.round(t.duration_ms / 1000) : 190,
             coverUrl: albumCover,
             audioUrl: t.preview_url || "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview122/v4/fb/3c/74/fb3c7480-781d-1830-3edd-fd15bdb23406/mzaf_17024654962565086082.plus.aac.p.m4a",
             source: 'spotify',
-            spotifyId: t.id,
+            spotifyId: t.id || `alb_${idx}`,
             addedAt: new Date().toISOString(),
             genre: 'Spotify Album'
           }));
