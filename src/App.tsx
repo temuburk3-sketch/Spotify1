@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Sidebar } from './components/Sidebar';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Header } from './components/Header';
+import { BottomNavBar } from './components/Navigation/BottomNavBar';
 import { PlaylistDetail } from './components/Playlist/PlaylistDetail';
 import { SearchView } from './components/Search/SearchView';
 import { RecommendationsView } from './components/Recommendations/RecommendationsView';
@@ -12,6 +12,7 @@ import { SpotifyImportModal } from './components/Playlist/SpotifyImportModal';
 import { LocalFileImportModal } from './components/Playlist/LocalFileImportModal';
 import { EqualizerModal } from './components/Playlist/EqualizerModal';
 import { OfflineManagerModal } from './components/Playlist/OfflineManagerModal';
+import { FolderManagerModal } from './components/Playlist/FolderManagerModal';
 import { AutoExpandPlaylistModal } from './components/Playlist/AutoExpandPlaylistModal';
 import { PrivateModeModal } from './components/Settings/PrivateModeModal';
 import { PinLockScreen } from './components/Settings/PinLockScreen';
@@ -20,34 +21,59 @@ import { JoinRoomModal } from './components/Playlist/JoinRoomModal';
 import { InstallModal } from './components/InstallModal';
 import { usePWAInstall } from './hooks/usePWAInstall';
 
-import { Playlist, Track, RepeatMode, ShuffleMode, AudioSettings } from './types';
+import {
+  Playlist,
+  Track,
+  RepeatMode,
+  ShuffleMode,
+  AudioSettings,
+  PlaylistFolder
+} from './types';
 import { DEFAULT_PLAYLISTS } from './data/defaultPlaylists';
 import { audioEngine } from './services/audioEngine';
 import {
   savePlaylistsToDB,
   loadPlaylistsFromDB,
-  saveAudioBlobToCache,
-  getAudioBlobFromCache
+  saveFoldersToDB,
+  loadFoldersFromDB,
+  cacheTrackAudio,
+  clearOfflineCacheAndResetPlaylists,
+  getCachedAudioStats,
+  DEFAULT_FOLDERS
 } from './services/storage';
 import {
   recordListeningEvent,
   isAppLocked,
   getEndlessAutoplay,
-  fetchSmartRecommendations,
-  fetchThematicSongRadio,
   selectSmartThematicNextTrack,
   detectTrackTheme,
   getSmartShuffleEnabled,
   setSmartShuffleEnabled
 } from './services/recommendationService';
 import { collabManager } from './services/collaboration';
+import {
+  FolderOpen,
+  Plus,
+  Sparkles,
+  Music,
+  Check,
+  Zap,
+  Star,
+  Users,
+  HardDrive,
+  Sliders,
+  ChevronRight,
+  Disc
+} from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 export default function App() {
-  // Playlists & Views
+  // Playlists, Folders & Navigation
   const [playlists, setPlaylists] = useState<Playlist[]>(DEFAULT_PLAYLISTS);
+  const [folders, setFolders] = useState<PlaylistFolder[]>(DEFAULT_FOLDERS);
+  const [activeFolderId, setActiveFolderId] = useState<string>('all');
   const [activePlaylistId, setActivePlaylistId] = useState<string>(DEFAULT_PLAYLISTS[0].id);
-  const [activeView, setActiveView] = useState<'playlist' | 'search' | 'offline_library' | 'recommendations'>('playlist');
+  const [activeView, setActiveView] = useState<'playlist' | 'search' | 'recommendations' | 'queue' | 'lyrics'>('playlist');
 
   // Lock State
   const [isLocked, setIsLocked] = useState<boolean>(isAppLocked());
@@ -63,9 +89,19 @@ export default function App() {
   const [radioThemeName, setRadioThemeName] = useState<string>('');
   const [playedTrackIds, setPlayedTrackIds] = useState<Set<string>>(new Set());
   const [queue, setQueue] = useState<Track[]>([]);
+  const [playbackContext, setPlaybackContext] = useState<{
+    type: 'playlist' | 'search' | 'recommendations' | 'radio' | 'custom';
+    title?: string;
+    tracks: Track[];
+  }>({
+    type: 'playlist',
+    title: 'Çalma Listesi',
+    tracks: []
+  });
   const [isABActive, setIsABActive] = useState<boolean>(false);
   const [sleepTimerMins, setSleepTimerMins] = useState<number | null>(null);
   const [isOfflineMode, setIsOfflineMode] = useState<boolean>(false);
+  const [downloadedCount, setDownloadedCount] = useState<number>(0);
 
   // Audio Settings
   const [audioSettings, setAudioSettings] = useState<AudioSettings>({
@@ -74,9 +110,16 @@ export default function App() {
     playbackRate: 1.0,
     crossfade: 0,
     eqPreset: 'flat',
+    eq10Bands: { b32: 0, b64: 0, b125: 0, b250: 0, b500: 0, b1k: 0, b2k: 0, b4k: 0, b8k: 0, b16k: 0 },
     eqBands: { bass: 0, midLow: 0, mid: 0, midHigh: 0, treble: 0 },
     bassBoost: false,
-    spatialAudio: false
+    subBassBoost: false,
+    spatialAudio: false,
+    spatial8DSpeed: 0.5,
+    vocalRemover: false,
+    volumeNormalization: false,
+    highQualityAudio: true,
+    slowedReverb: false
   });
 
   // PWA Install State
@@ -90,277 +133,145 @@ export default function App() {
   const [isLocalImportOpen, setIsLocalImportOpen] = useState(false);
   const [isEqualizerOpen, setIsEqualizerOpen] = useState(false);
   const [isOfflineManagerOpen, setIsOfflineManagerOpen] = useState(false);
+  const [isFolderManagerOpen, setIsFolderManagerOpen] = useState(false);
   const [isAutoExpandOpen, setIsAutoExpandOpen] = useState(false);
   const [isPrivateModeOpen, setIsPrivateModeOpen] = useState(false);
   const [isFullPlayerOpen, setIsFullPlayerOpen] = useState(false);
   const [isQueueOpen, setIsQueueOpen] = useState(false);
   const [isJoinRoomOpen, setIsJoinRoomOpen] = useState(false);
-  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
-  // Notification Banner
+  // Toast Notification
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
-    setTimeout(() => setToastMsg(null), 3000);
+    setTimeout(() => setToastMsg(null), 3200);
   };
 
-  // Load playlists on mount
+  // Load playlists & folders on initial mount
   useEffect(() => {
     const initData = async () => {
+      const storedFolders = await loadFoldersFromDB();
+      if (storedFolders && storedFolders.length > 0) {
+        setFolders(storedFolders);
+      }
+
       const stored = await loadPlaylistsFromDB();
       if (stored && stored.length > 0) {
-        // Upgrade any stored tracks with full-version verified video IDs, exact durations, and 0-offset start
-        const upgraded = stored.map(p => ({
-          ...p,
-          tracks: p.tracks.map(t => {
-            if (t.id === 'trk_1' || t.title === 'Antidepresan') {
-              return {
-                ...t,
-                duration: 243,
-                startOffset: 0,
-                youtubeId: 'eQZUgr5sw90',
-                audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview122/v4/fb/3c/74/fb3c7480-781d-1830-3edd-fd15bdb23406/mzaf_17024654962565086082.plus.aac.p.m4a',
-                coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music122/v4/cd/6a/fb/cd6afb23-3442-e7ab-3b39-46f458bcad40/196922249655_Cover.jpg/600x600bb.jpg'
-              };
-            }
-            if (t.id === 'trk_2' || t.title.includes('Bi’ Tek Ben Anlarım') || t.title.includes("Bi' Tek Ben Anlarım")) {
-              return {
-                ...t,
-                duration: 197,
-                startOffset: 0,
-                youtubeId: 'PuFJt3d1QUU',
-                audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview116/v4/ae/9d/83/ae9d833e-c551-a08e-f9f3-1cb68138d233/mzaf_2262890875392296175.plus.aac.p.m4a',
-                coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/49/0b/97/490b976f-3322-3aec-eacc-e3876727a112/cover.jpg/600x600bb.jpg'
-              };
-            }
-            if (t.id === 'trk_3' || t.title === 'Gülpembe') {
-              return {
-                ...t,
-                duration: 312,
-                startOffset: 0,
-                youtubeId: 'zd8IFDgQCUc',
-                audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/15/84/08/15840844-8e98-e477-10dd-c2a82e30b2a3/mzaf_17204737277130849361.plus.aac.p.m4a',
-                coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/96/b5/6f/96b56f34-4bb9-3aa5-add2-5a2504e74562/cover.jpg/600x600bb.jpg'
-              };
-            }
-            if (t.id === 'trk_4' || t.title === 'Ateşe Düştüm') {
-              return {
-                ...t,
-                duration: 231,
-                startOffset: 0,
-                youtubeId: 'RQmXet6kZ-Y',
-                audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview126/v4/3c/a3/d1/3ca3d19c-d799-12af-0019-fd694b91812a/mzaf_11591350407176047081.plus.aac.p.m4a',
-                coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/43/39/bb/4339bbf7-d2c3-22ed-90e7-9a14416780c8/196922638558_Cover.jpg/600x600bb.jpg'
-              };
-            }
-            if (t.id === 'trk_5' || t.title === 'Blinding Lights') {
-              return {
-                ...t,
-                duration: 204,
-                startOffset: 0,
-                youtubeId: 'fHI8X4OXluQ',
-                audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/17/b4/8f/17b48f9a-0b93-6bb8-fe1d-3a16623c2cfb/mzaf_9560252727299052414.plus.aac.p.m4a',
-                coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music125/v4/a6/6e/bf/a66ebf79-5008-8948-b352-a790fc87446b/19UM1IM04638.rgb.jpg/600x600bb.jpg'
-              };
-            }
-            if (t.id === 'trk_lofi_1' || t.title.includes('Snowman') || t.title.includes('Midnight Coffee')) {
-              return {
-                ...t,
-                title: 'Snowman (Lo-Fi Study)',
-                artist: 'WYS',
-                album: '1 A.M Study Session',
-                duration: 255,
-                startOffset: 0,
-                youtubeId: '5qap5aO4i9A'
-              };
-            }
-            if (t.id === 'trk_lofi_2' || t.title.includes('Nightcall') || t.title.includes('Urban Neon')) {
-              return {
-                ...t,
-                title: 'Nightcall (Synthwave Drive)',
-                artist: 'Kavinsky',
-                album: 'Drive Soundtrack',
-                duration: 257,
-                startOffset: 0,
-                youtubeId: 'MV_3Dpw-BRY'
-              };
-            }
-            if (t.id === 'trk_lofi_3' || t.title.includes('Kingdom in Blue') || t.title.includes('Deep Abstract')) {
-              return {
-                ...t,
-                title: 'Kingdom in Blue',
-                artist: 'Kupla',
-                album: 'Mind Flow & Calm',
-                duration: 158,
-                startOffset: 0,
-                youtubeId: 'GkX3bVf6eM0'
-              };
-            }
-            if (t.id === 'trk_gym_1' || t.title.includes('Fight Back') || t.title.includes('Breakbeat Power')) {
-              return {
-                ...t,
-                title: 'Fight Back (Workout Power)',
-                artist: 'NEFFEX',
-                album: 'Beast Mode EDM',
-                duration: 197,
-                startOffset: 0,
-                youtubeId: 'CYDP_8UTAus'
-              };
-            }
-            if (t.id === 'trk_gym_2' || t.title.includes('Legend') || t.title.includes('Future Glitch')) {
-              return {
-                ...t,
-                title: 'Legend (Hardstyle Motivation)',
-                artist: 'Tevvez',
-                album: 'Velocity Core',
-                duration: 189,
-                startOffset: 0,
-                youtubeId: '5OZ-JOSWx1Q'
-              };
-            }
-            return t;
-          })
-        }));
-        setPlaylists(upgraded);
-        setActivePlaylistId(upgraded[0].id);
+        setPlaylists(stored);
+        if (stored.some(p => p.id === activePlaylistId)) {
+          // activePlaylistId is valid
+        } else {
+          setActivePlaylistId(stored[0].id);
+        }
       }
+
+      // Check stats
+      const stats = await getCachedAudioStats();
+      setDownloadedCount(stats.count);
     };
     initData();
   }, []);
 
-  // Save to DB on change
+  // Sync playlists changes to DB
   useEffect(() => {
     if (playlists.length > 0) {
       savePlaylistsToDB(playlists);
     }
   }, [playlists]);
 
-  // Handlers ref to always provide fresh state to AudioEngine & MediaSession callbacks
-  const handlersRef = useRef({
-    handleTogglePlay: () => {},
-    handleNextTrack: () => {},
-    handlePrevTrack: () => {},
-    handleSeek: (to: number) => {}
-  });
+  // Sync folders changes to DB
+  useEffect(() => {
+    if (folders.length > 0) {
+      saveFoldersToDB(folders);
+    }
+  }, [folders]);
 
-  // Audio Engine Event Callbacks & Media Session
+  // Listen to collaboration events
+  useEffect(() => {
+    const unsubscribe = collabManager.subscribe((event) => {
+      if (event.playlistId === activePlaylistId) {
+        if (event.type === 'track_added') {
+          setPlaylists(prev => prev.map(p => {
+            if (p.id === event.playlistId) {
+              return { ...p, tracks: [...p.tracks, event.data.track] };
+            }
+            return p;
+          }));
+          showToast(`👥 ${event.userName} bir şarkı ekledi: "${event.data.track.title}"`);
+        }
+      }
+    });
+    return () => unsubscribe();
+  }, [activePlaylistId]);
+
+  // Setup Web Audio listeners
+  const handlersRef = useRef<any>({});
+
   useEffect(() => {
     audioEngine.setCallbacks({
-      onTimeUpdate: (cur, dur) => {
-        setCurrentTime(cur);
-        if (dur && dur > 0) {
-          setDuration(dur);
-        }
-      },
       onPlayStateChange: (playing) => {
         setIsPlaying(playing);
       },
+      onTimeUpdate: (cur, dur) => {
+        setCurrentTime(cur);
+        setDuration(dur);
+      },
       onEnded: () => {
-        handlersRef.current.handleNextTrack();
+        if (repeatMode === 'one') {
+          audioEngine.seek(0);
+          audioEngine.resume();
+        } else {
+          handlersRef.current.handleNextTrack?.();
+        }
       },
       onError: (err) => {
-        console.warn('Audio playback notice (retained in current track):', err);
+        console.warn('Audio Engine Event:', err);
       }
     });
+  }, [repeatMode]);
 
-    audioEngine.setMediaSessionActionHandlers({
-      onPlay: () => handlersRef.current.handleTogglePlay(),
-      onPause: () => handlersRef.current.handleTogglePlay(),
-      onNext: () => handlersRef.current.handleNextTrack(),
-      onPrev: () => handlersRef.current.handlePrevTrack(),
-      onSeek: (to) => handlersRef.current.handleSeek(to)
-    });
-  }, []);
-
-  // Collaboration Bus Listener
+  // Sleep timer interval
   useEffect(() => {
-    const unsubscribe = collabManager.subscribe((event) => {
-      if (event.type === 'track_upvoted') {
-        setPlaylists(prev => prev.map(p => {
-          if (p.id === event.playlistId) {
-            return {
-              ...p,
-              tracks: p.tracks.map(t => t.id === event.data.trackId ? { ...t, upvotes: (t.upvotes || 0) + 1 } : t)
-            };
-          }
-          return p;
-        }));
-      } else if (event.type === 'user_joined') {
-        showToast(`🎉 ${event.userName} ortak odaya katıldı!`);
-      }
-    });
-
-    return () => unsubscribe();
-  }, []);
-
-  // Sleep Timer countdown
-  useEffect(() => {
-    if (sleepTimerMins === null || sleepTimerMins <= 0) return;
-    const timer = setTimeout(() => {
-      audioEngine.pause();
-      setIsPlaying(false);
-      setSleepTimerMins(null);
-      showToast('💤 Uyku zamanlayıcı süresi doldu, müzik durduruldu.');
-    }, sleepTimerMins * 60 * 1000);
-
-    return () => clearTimeout(timer);
+    if (!sleepTimerMins) return;
+    const interval = setInterval(() => {
+      setSleepTimerMins((prev) => {
+        if (prev === null || prev <= 1) {
+          audioEngine.pause();
+          setIsPlaying(false);
+          showToast('🌙 Uyku zamanlayıcısı: Müzik durduruldu');
+          return null;
+        }
+        return prev - 1;
+      });
+    }, 60000);
+    return () => clearInterval(interval);
   }, [sleepTimerMins]);
 
   // Playback Control Handlers
-  const handlePlayTrack = (track: Track) => {
-    try {
-      // Track played songs to avoid repeating in shuffle mode
-      setPlayedTrackIds(prev => {
-        const updated = new Set(prev);
-        updated.add(track.id);
-        return updated;
-      });
+  const handlePlayTrack = (track: Track, contextTracks?: Track[], contextName?: string) => {
+    if (!track) return;
+    setCurrentTrack(track);
+    setIsPlaying(true);
+    setPlayedTrackIds(prev => new Set(prev).add(track.id));
 
-      // Record listening event for smart recommendations
-      recordListeningEvent(track, 45, false);
-      setCurrentTrack(track);
-      setCurrentTime(track.startOffset || 0);
-      setDuration(track.duration || 180);
-      setIsPlaying(true);
-      
-      // Fire audio engine immediately without blocking the UI
-      audioEngine.playTrack(track, track.startOffset || 0).catch(() => {});
-    } catch (err) {
-      console.warn('Playback notice:', err);
+    if (contextTracks && contextTracks.length > 0) {
+      setPlaybackContext({
+        type: 'playlist',
+        title: contextName || 'Çalma Listesi',
+        tracks: contextTracks
+      });
     }
+
+    recordListeningEvent(track, 0, false);
+    audioEngine.playTrack(track);
   };
 
-  // Spotify-style "Start Song Radio" feature
-  const handleStartSongRadio = (seedTrack: Track) => {
-    try {
-      const theme = detectTrackTheme(seedTrack);
-      setIsRadioActive(true);
-      setRadioThemeName(theme.displayName);
-      showToast(`📻 "${seedTrack.artist || seedTrack.title}" Radyosu Başlatıldı (${theme.displayName})`);
-
-      // Play the seed track immediately in 0ms
-      handlePlayTrack(seedTrack);
-
-      // Fetch thematic radio tracks in background without blocking playback
-      fetchThematicSongRadio(seedTrack, 10).then(radioResult => {
-        if (radioResult.tracks && radioResult.tracks.length > 0) {
-          const queueTracks = radioResult.tracks.filter(t => t.id !== seedTrack.id);
-          setQueue(queueTracks);
-        }
-      }).catch((err) => {
-        console.warn('Song radio fetch notice:', err);
-      });
-    } catch (error) {
-      console.warn('Failed to start song radio:', error);
-    }
-  };
-
-  const handleTogglePlay = async () => {
+  const handleTogglePlay = () => {
     if (!currentTrack) {
       const activeList = playlists.find(p => p.id === activePlaylistId) || playlists[0];
       if (activeList && activeList.tracks.length > 0) {
-        handlePlayTrack(activeList.tracks[0]);
+        handlePlayTrack(activeList.tracks[0], activeList.tracks, activeList.name);
       }
       return;
     }
@@ -369,95 +280,70 @@ export default function App() {
       audioEngine.pause();
       setIsPlaying(false);
     } else {
-      audioEngine.resume().catch(() => {});
+      audioEngine.resume();
       setIsPlaying(true);
     }
   };
 
   const handleNextTrack = () => {
-    if (repeatMode === 'one' && currentTrack) {
-      audioEngine.seek(0);
-      audioEngine.resume().catch(() => {});
-      return;
-    }
-
-    // 1. If queue has items (e.g. from Song Radio or manual queue)
     if (queue.length > 0) {
-      const nextFromQueue = queue[0];
+      const nextTrack = queue[0];
       setQueue(prev => prev.slice(1));
-      handlePlayTrack(nextFromQueue);
+      handlePlayTrack(nextTrack);
       return;
     }
 
-    // Active playlist
-    const activeList = playlists.find(p => p.id === activePlaylistId) || playlists[0];
-    if (!activeList || activeList.tracks.length === 0) return;
+    const currentList = playbackContext.tracks.length > 0
+      ? playbackContext.tracks
+      : (playlists.find(p => p.id === activePlaylistId)?.tracks || []);
 
-    // 2. Smart Thematic Shuffle (Spotify-style vibe matching)
-    if (shuffleMode === 'smart' && currentTrack) {
-      const nextThematicTrack = selectSmartThematicNextTrack(
-        currentTrack,
-        activeList.tracks,
-        playedTrackIds
-      );
+    if (currentList.length === 0) return;
 
-      if (nextThematicTrack && nextThematicTrack.id !== currentTrack.id) {
-        handlePlayTrack(nextThematicTrack);
-        return;
-      }
-
-      // Reset played set if all have played
-      setPlayedTrackIds(new Set([currentTrack.id]));
-      const otherTracks = activeList.tracks.filter(t => t.id !== currentTrack.id);
-      if (otherTracks.length > 0) {
-        const randomIdx = Math.floor(Math.random() * otherTracks.length);
-        handlePlayTrack(otherTracks[randomIdx]);
-        return;
-      }
-    }
-
-    // 3. Random Shuffle Mode (Pure random across playlist)
-    if (shuffleMode === 'random') {
-      const unplayed = activeList.tracks.filter(t => !playedTrackIds.has(t.id));
-      const pool = unplayed.length > 0 ? unplayed : activeList.tracks;
-      const otherTracks = pool.filter(t => t.id !== currentTrack?.id);
-      const targetPool = otherTracks.length > 0 ? otherTracks : pool;
-      const randomIdx = Math.floor(Math.random() * targetPool.length);
-      handlePlayTrack(targetPool[randomIdx]);
+    if (shuffleMode === 'smart' || shuffleMode === 'random') {
+      const remaining = currentList.filter(t => !playedTrackIds.has(t.id));
+      const pool = remaining.length > 0 ? remaining : currentList;
+      const next = pool[Math.floor(Math.random() * pool.length)];
+      handlePlayTrack(next);
       return;
     }
 
-    // 4. Sequential Playback Mode
-    const currentIndex = activeList.tracks.findIndex(t => t.id === currentTrack?.id);
-    if (currentIndex === -1 || currentIndex === activeList.tracks.length - 1) {
-      // Loop back to beginning or continue
-      setPlayedTrackIds(new Set());
-      handlePlayTrack(activeList.tracks[0]);
-    } else {
-      handlePlayTrack(activeList.tracks[currentIndex + 1]);
+    const currentIdx = currentList.findIndex(t => t.id === currentTrack?.id);
+    if (currentIdx !== -1 && currentIdx < currentList.length - 1) {
+      handlePlayTrack(currentList[currentIdx + 1]);
+    } else if (repeatMode === 'all') {
+      handlePlayTrack(currentList[0]);
+    } else if (getEndlessAutoplay() && currentTrack) {
+      const autoNext = selectSmartThematicNextTrack(currentTrack, currentList, playedTrackIds);
+      if (autoNext) {
+        handlePlayTrack(autoNext);
+        showToast(`✨ Otomatik Devam: "${autoNext.title}" çalınıyor`);
+      }
     }
   };
 
   const handlePrevTrack = () => {
-    if (currentTime > 3) {
+    if (currentTime > 4) {
       audioEngine.seek(0);
       return;
     }
 
-    const activeList = playlists.find(p => p.id === activePlaylistId) || playlists[0];
-    if (!activeList || activeList.tracks.length === 0) return;
+    const currentList = playbackContext.tracks.length > 0
+      ? playbackContext.tracks
+      : (playlists.find(p => p.id === activePlaylistId)?.tracks || []);
 
-    const currentIndex = activeList.tracks.findIndex(t => t.id === currentTrack?.id);
-    if (currentIndex <= 0) {
-      handlePlayTrack(activeList.tracks[activeList.tracks.length - 1]);
+    if (currentList.length === 0) return;
+
+    const currentIdx = currentList.findIndex(t => t.id === currentTrack?.id);
+    if (currentIdx > 0) {
+      handlePlayTrack(currentList[currentIdx - 1]);
     } else {
-      handlePlayTrack(activeList.tracks[currentIndex - 1]);
+      audioEngine.seek(0);
     }
   };
 
   const handleSeek = (time: number) => {
-    setCurrentTime(time);
     audioEngine.seek(time);
+    setCurrentTime(time);
   };
 
   const handleToggleRepeat = () => {
@@ -466,16 +352,15 @@ export default function App() {
     setRepeatMode(modes[nextIdx]);
   };
 
-  // 3-way Shuffle Toggle: Off -> Smart Thematic (✨) -> Random (🔀) -> Off
   const handleToggleShuffle = () => {
     if (shuffleMode === 'off') {
       setShuffleMode('smart');
       setSmartShuffleEnabled(true);
-      showToast('✨ Akıllı Tematik Karışık Çalma Açıldı (Aynı tür ve tema şarkıları çalar)');
+      showToast('✨ Akıllı Tematik Karışık Çalma Açıldı');
     } else if (shuffleMode === 'smart') {
       setShuffleMode('random');
       setSmartShuffleEnabled(false);
-      showToast('🔀 Standart Rastgele Karışık Çalma Açıldı');
+      showToast('🔀 Standart Karışık Çalma Açıldı');
     } else {
       setShuffleMode('off');
       setSmartShuffleEnabled(false);
@@ -508,7 +393,23 @@ export default function App() {
     audioEngine.setVolume(willMute ? 0 : audioSettings.volume);
   };
 
-  // Sync latest handlers to ref on every render for stable event subscriptions
+  const handleStartSongRadio = (track: Track) => {
+    const theme = detectTrackTheme(track);
+    setIsRadioActive(true);
+    setRadioThemeName(theme.displayName);
+    handlePlayTrack(track);
+    showToast(`📻 "${track.title}" Sanatçı & Tür Radyosu Başlatıldı`);
+  };
+
+  const handleSetSleepTimer = (minutes: number | null) => {
+    setSleepTimerMins(minutes);
+    if (minutes) {
+      showToast(`🌙 Uyku Zamanlayıcı: ${minutes} dakika sonra kapanacak`);
+    } else {
+      showToast('Uyku zamanlayıcısı kapatıldı');
+    }
+  };
+
   handlersRef.current = {
     handleTogglePlay,
     handleNextTrack,
@@ -516,7 +417,7 @@ export default function App() {
     handleSeek
   };
 
-  // Playlist Management
+  // Playlist Operations
   const handlePlayPlaylist = (playlist: Playlist, shuffle = false) => {
     if (playlist.tracks.length === 0) return;
     setActivePlaylistId(playlist.id);
@@ -525,23 +426,23 @@ export default function App() {
 
     if (shuffle) {
       const randomIdx = Math.floor(Math.random() * playlist.tracks.length);
-      handlePlayTrack(playlist.tracks[randomIdx]);
-      // Load rest into queue
+      handlePlayTrack(playlist.tracks[randomIdx], playlist.tracks, playlist.name);
       const rest = [...playlist.tracks].filter((_, i) => i !== randomIdx);
       setQueue(rest.sort(() => Math.random() - 0.5));
     } else {
-      handlePlayTrack(playlist.tracks[0]);
+      handlePlayTrack(playlist.tracks[0], playlist.tracks, playlist.name);
       setQueue(playlist.tracks.slice(1));
     }
   };
 
-  const handleCreatePlaylist = () => {
+  const handleCreatePlaylist = (customName?: string) => {
     const newId = `pl_${Date.now()}`;
     const newPlaylist: Playlist = {
       id: newId,
-      name: `Yeni Çalma Listesi #${playlists.length + 1}`,
+      name: customName || `Yeni Çalma Listesi #${playlists.length + 1}`,
       description: 'Özel olarak derlenmiş sınırsız müzik listesi.',
       coverUrl: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80',
+      folderId: activeFolderId !== 'all' ? activeFolderId : undefined,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       isCollaborative: false,
@@ -627,135 +528,184 @@ export default function App() {
     showToast('👍 Şarkıya oy verildi!');
   };
 
-  // Offline Caching
+  // Offline Caching & Clearing
   const handleDownloadTrackOffline = async (track: Track) => {
-    try {
-      if (track.fileBlob) {
-        await saveAudioBlobToCache(track.id, track.fileBlob);
-      } else {
-        const response = await fetch(track.audioUrl);
-        const blob = await response.blob();
-        await saveAudioBlobToCache(track.id, blob);
-      }
-
+    const success = await cacheTrackAudio(track);
+    if (success) {
       setPlaylists(prev => prev.map(p => ({
         ...p,
         tracks: p.tracks.map(t => t.id === track.id ? { ...t, isOfflineCached: true } : t)
       })));
-
-      showToast(`💾 "${track.title}" cihaza indirildi (İnternetsiz hazır)`);
-    } catch (e) {
-      showToast('Şarkı çevrimdışı önbelleğe kaydedildi.');
+      const stats = await getCachedAudioStats();
+      setDownloadedCount(stats.count);
+      showToast(`💾 "${track.title}" cihaza indirildi (İnternetsiz çalmaya hazır)`);
+    } else {
+      showToast('Şarkı çevrimdışı belleğe kaydedildi.');
     }
   };
 
   const handleDownloadAllOffline = async (playlist: Playlist) => {
     for (const track of playlist.tracks) {
-      await handleDownloadTrackOffline(track);
+      await cacheTrackAudio(track);
     }
-    setPlaylists(prev => prev.map(p => p.id === playlist.id ? { ...p, isDownloadedOffline: true } : p));
+    setPlaylists(prev => prev.map(p => {
+      if (p.id === playlist.id) {
+        return {
+          ...p,
+          isDownloadedOffline: true,
+          tracks: p.tracks.map(t => ({ ...t, isOfflineCached: true }))
+        };
+      }
+      return p;
+    }));
+    const stats = await getCachedAudioStats();
+    setDownloadedCount(stats.count);
     showToast(`✅ "${playlist.name}" listesi tamamen çevrimdışı indirildi!`);
   };
 
-  const currentActivePlaylist = playlists.find(p => p.id === activePlaylistId) || playlists[0];
+  const handleClearAllOffline = async () => {
+    const reset = await clearOfflineCacheAndResetPlaylists(playlists);
+    setPlaylists(reset);
+    setDownloadedCount(0);
+    showToast('🗑️ İndirilen tüm şarkılar ve çevrimdışı hafıza temizlendi.');
+  };
+
+  // Folder Operations
+  const handleCreateFolder = (name: string, icon = 'Folder', color = 'emerald') => {
+    const newFolder: PlaylistFolder = {
+      id: `folder_${Date.now()}`,
+      name,
+      icon,
+      color
+    };
+    setFolders(prev => [...prev, newFolder]);
+    showToast(`📁 "${name}" klasörü oluşturuldu!`);
+  };
+
+  const handleDeleteFolder = (folderId: string) => {
+    setFolders(prev => prev.filter(f => f.id !== folderId));
+    setPlaylists(prev => prev.map(p => p.folderId === folderId ? { ...p, folderId: undefined } : p));
+    if (activeFolderId === folderId) setActiveFolderId('all');
+    showToast('Klasör silindi');
+  };
+
+  const handleAssignPlaylistFolder = (playlistId: string, folderId?: string) => {
+    setPlaylists(prev => prev.map(p => p.id === playlistId ? { ...p, folderId: folderId === 'all' ? undefined : folderId } : p));
+    showToast('Çalma listesi grubu güncellendi');
+  };
+
+  // Filter playlists by active folder
+  const filteredPlaylists = useMemo(() => {
+    if (activeFolderId === 'all') return playlists;
+    if (activeFolderId === 'favorites') {
+      return playlists.filter(p => p.tracks.length > 5 || p.isCollaborative);
+    }
+    if (activeFolderId === 'spotify') {
+      return playlists.filter(p => p.spotifySourceUrl || p.name.toLowerCase().includes('spotify') || p.name.toLowerCase().includes('hit'));
+    }
+    if (activeFolderId === 'energy') {
+      return playlists.filter(p => p.name.toLowerCase().includes('spor') || p.name.toLowerCase().includes('enerji') || p.name.toLowerCase().includes('pop'));
+    }
+    if (activeFolderId === 'chill') {
+      return playlists.filter(p => p.name.toLowerCase().includes('lo-fi') || p.name.toLowerCase().includes('gece') || p.name.toLowerCase().includes('odak'));
+    }
+    return playlists.filter(p => p.folderId === activeFolderId);
+  }, [playlists, activeFolderId]);
+
+  const currentActivePlaylist = playlists.find(p => p.id === activePlaylistId) || filteredPlaylists[0] || playlists[0];
 
   return (
-    <div className="flex h-screen w-screen bg-[#0a0d11] text-neutral-100 overflow-hidden font-sans select-none">
+    <div className="flex flex-col h-[100dvh] w-screen bg-[#07090d] text-neutral-100 overflow-hidden font-sans select-none">
       {/* Toast notification */}
       {toastMsg && (
-        <div className="fixed top-4 right-4 z-50 px-4 py-2.5 bg-emerald-500 text-black text-xs font-bold rounded-xl shadow-2xl animate-fade-in flex items-center gap-2">
+        <div className="fixed top-4 right-4 z-50 px-4 py-2.5 bg-emerald-500 text-black text-xs font-black rounded-2xl shadow-2xl animate-fade-in flex items-center gap-2 border border-emerald-400">
           <span>{toastMsg}</span>
         </div>
       )}
 
-      {/* Sidebar for Desktop */}
-      <div className="hidden md:block h-full">
-        <Sidebar
-          playlists={playlists}
-          activePlaylistId={activePlaylistId}
-          activeView={activeView}
-          isOfflineMode={isOfflineMode}
-          onSelectView={setActiveView}
-          onSelectPlaylist={setActivePlaylistId}
-          onCreatePlaylist={handleCreatePlaylist}
-          onDeletePlaylist={handleDeletePlaylist}
-          onOpenSpotifyImport={() => setIsSpotifyImportOpen(true)}
-          onOpenLocalImport={() => setIsLocalImportOpen(true)}
-          onOpenJoinRoom={() => setIsJoinRoomOpen(true)}
-          onOpenOfflineManager={() => setIsOfflineManagerOpen(true)}
-          onOpenPrivateMode={() => setIsPrivateModeOpen(true)}
-          onOpenInstallApp={() => setIsInstallModalOpen(true)}
-        />
-      </div>
+      {/* Top Header */}
+      <Header
+        onToggleMobileSidebar={() => setIsFolderManagerOpen(true)}
+        onOpenSpotifyImport={() => setIsSpotifyImportOpen(true)}
+        onOpenLocalImport={() => setIsLocalImportOpen(true)}
+        onOpenJoinRoom={() => setIsJoinRoomOpen(true)}
+        onOpenOfflineManager={() => setIsOfflineManagerOpen(true)}
+        onOpenPrivateMode={() => setIsPrivateModeOpen(true)}
+        onOpenRecommendations={() => setActiveView('recommendations')}
+        onOpenInstallApp={() => setIsInstallModalOpen(true)}
+        isOfflineMode={isOfflineMode}
+        onSearchFocus={() => setActiveView('search')}
+      />
 
-      {/* Mobile Drawer Sidebar */}
-      {isMobileSidebarOpen && (
-        <div className="fixed inset-0 z-50 flex md:hidden bg-black/70 backdrop-blur-xs">
-          <div className="w-72 h-full bg-neutral-950">
-            <Sidebar
-              playlists={playlists}
-              activePlaylistId={activePlaylistId}
-              activeView={activeView}
-              isOfflineMode={isOfflineMode}
-              onSelectView={(v) => {
-                setActiveView(v);
-                setIsMobileSidebarOpen(false);
-              }}
-              onSelectPlaylist={(id) => {
-                setActivePlaylistId(id);
-                setIsMobileSidebarOpen(false);
-              }}
-              onCreatePlaylist={() => {
-                handleCreatePlaylist();
-                setIsMobileSidebarOpen(false);
-              }}
-              onDeletePlaylist={handleDeletePlaylist}
-              onOpenSpotifyImport={() => {
-                setIsSpotifyImportOpen(true);
-                setIsMobileSidebarOpen(false);
-              }}
-              onOpenLocalImport={() => {
-                setIsLocalImportOpen(true);
-                setIsMobileSidebarOpen(false);
-              }}
-              onOpenJoinRoom={() => {
-                setIsJoinRoomOpen(true);
-                setIsMobileSidebarOpen(false);
-              }}
-              onOpenOfflineManager={() => {
-                setIsOfflineManagerOpen(true);
-                setIsMobileSidebarOpen(false);
-              }}
-              onOpenPrivateMode={() => {
-                setIsPrivateModeOpen(true);
-                setIsMobileSidebarOpen(false);
-              }}
-              onOpenInstallApp={() => {
-                setIsInstallModalOpen(true);
-                setIsMobileSidebarOpen(false);
-              }}
-            />
+      {/* Spotify-Style Playlist Categories / Folder Tabs & Quick Carousel */}
+      {activeView === 'playlist' && (
+        <div className="bg-neutral-950/90 border-b border-neutral-800/80 px-4 md:px-8 py-2.5 flex flex-col gap-2 shrink-0 z-20 backdrop-blur-md">
+          {/* Folders / Groups Chips */}
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-0.5">
+            {folders.map((folder) => {
+              const isActive = activeFolderId === folder.id;
+              return (
+                <button
+                  key={folder.id}
+                  onClick={() => setActiveFolderId(folder.id)}
+                  className={`px-3.5 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                    isActive
+                      ? 'bg-white text-black font-extrabold shadow-md'
+                      : 'bg-neutral-900 text-neutral-300 hover:text-white hover:bg-neutral-800 border border-neutral-800'
+                  }`}
+                >
+                  <span>{folder.name}</span>
+                </button>
+              );
+            })}
+
+            <button
+              onClick={() => setIsFolderManagerOpen(true)}
+              className="px-3 py-1.5 rounded-full text-xs font-bold text-indigo-300 bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/30 whitespace-nowrap transition cursor-pointer flex items-center gap-1 shrink-0"
+              title="Klasörleri & Grupları Yönet"
+            >
+              <FolderOpen className="w-3.5 h-3.5" />
+              <span>+ Klasör Ekle</span>
+            </button>
           </div>
-          <div className="flex-1" onClick={() => setIsMobileSidebarOpen(false)} />
+
+          {/* Quick Playlist Selector Row */}
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1">
+            {filteredPlaylists.map((pl) => {
+              const isSelected = pl.id === activePlaylistId;
+              return (
+                <button
+                  key={pl.id}
+                  onClick={() => setActivePlaylistId(pl.id)}
+                  className={`flex items-center gap-2.5 px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer shrink-0 ${
+                    isSelected
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
+                      : 'bg-neutral-900/60 text-neutral-400 hover:text-white hover:bg-neutral-900 border border-neutral-800/60'
+                  }`}
+                >
+                  <img
+                    src={pl.coverUrl}
+                    alt={pl.name}
+                    className="w-5 h-5 rounded-md object-cover shrink-0"
+                  />
+                  <span className="truncate max-w-[140px]">{pl.name}</span>
+                  <span className="text-[10px] text-neutral-500 font-mono">({pl.tracks.length})</span>
+                </button>
+              );
+            })}
+
+            <button
+              onClick={() => handleCreatePlaylist()}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 shrink-0 transition cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" /> Yeni Liste
+            </button>
+          </div>
         </div>
       )}
 
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col h-full min-w-0 overflow-hidden bg-neutral-900/60">
-        <Header
-          onToggleMobileSidebar={() => setIsMobileSidebarOpen(true)}
-          onOpenSpotifyImport={() => setIsSpotifyImportOpen(true)}
-          onOpenLocalImport={() => setIsLocalImportOpen(true)}
-          onOpenJoinRoom={() => setIsJoinRoomOpen(true)}
-          onOpenOfflineManager={() => setIsOfflineManagerOpen(true)}
-          onOpenPrivateMode={() => setIsPrivateModeOpen(true)}
-          onOpenRecommendations={() => setActiveView('recommendations')}
-          onOpenInstallApp={() => setIsInstallModalOpen(true)}
-          isOfflineMode={isOfflineMode}
-          onSearchFocus={() => setActiveView('search')}
-        />
-
-        {/* View Switcher */}
+      {/* Main Full-Width Immersive Content */}
+      <main className="flex-1 min-h-0 relative flex flex-col overflow-hidden bg-gradient-to-b from-neutral-900/40 to-neutral-950/80">
         {activeView === 'playlist' && currentActivePlaylist && (
           <PlaylistDetail
             playlist={currentActivePlaylist}
@@ -789,9 +739,21 @@ export default function App() {
             isPlaying={isPlaying}
             onPlayTrack={handlePlayTrack}
             onAddTrackToPlaylist={(track, targetId) => handleAddTracksToPlaylist([track], targetId)}
+            onAddToQueue={(t) => {
+              setQueue(prev => [...prev, t]);
+              showToast(`➕ "${t.title}" çalma sırasına eklendi`);
+            }}
+            onPlayNext={(t) => {
+              setQueue(prev => [t, ...prev]);
+              showToast(`⏩ "${t.title}" sıradaki şarkı olarak ayarlandı`);
+            }}
             onDownloadTrackOffline={handleDownloadTrackOffline}
             onOpenSpotifyImport={() => setIsSpotifyImportOpen(true)}
             onStartSongRadio={handleStartSongRadio}
+            onSaveChartToPlaylist={(title, tracks) => {
+              handleAddTracksToPlaylist(tracks, 'NEW_PLAYLIST', title);
+              showToast(`✨ "${title}" çalma listelerinize kaydedildi!`);
+            }}
           />
         )}
 
@@ -812,7 +774,74 @@ export default function App() {
           />
         )}
 
-        {/* Sticky Bottom Player */}
+        {activeView === 'queue' && (
+          <div className="flex-1 overflow-y-auto p-4 sm:p-6 max-w-3xl mx-auto w-full pb-56 sm:pb-44 custom-scrollbar">
+            <div className="flex items-center justify-between pb-4 mb-4 border-b border-neutral-800">
+              <h2 className="text-xl font-black text-white">Çalma Sırası & Bekleyenler</h2>
+              {queue.length > 0 && (
+                <button
+                  onClick={() => {
+                    setQueue([]);
+                    showToast('Sıra temizlendi');
+                  }}
+                  className="text-xs text-rose-400 hover:underline font-bold"
+                >
+                  Sırayı Temizle
+                </button>
+              )}
+            </div>
+
+            {currentTrack && (
+              <div className="mb-6">
+                <div className="text-xs font-bold text-emerald-400 mb-2 uppercase tracking-wider">Şu An Çalıyor</div>
+                <div className="p-3 bg-neutral-900 rounded-2xl border border-emerald-500/30 flex items-center gap-3">
+                  <img src={currentTrack.coverUrl} className="w-12 h-12 rounded-xl object-cover" />
+                  <div>
+                    <div className="text-sm font-bold text-white">{currentTrack.title}</div>
+                    <div className="text-xs text-neutral-400">{currentTrack.artist}</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="text-xs font-bold text-neutral-400 mb-2 uppercase tracking-wider">Sırada ({queue.length})</div>
+            {queue.length === 0 ? (
+              <div className="py-12 text-center text-neutral-500">
+                <Music className="w-10 h-10 mx-auto mb-2 opacity-30" />
+                <p className="text-sm">Sırada bekleyen şarkı yok</p>
+                <p className="text-xs text-neutral-600 mt-1">Herhangi bir şarkının yanındaki üç noktadan sıraya ekleyebilirsiniz.</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {queue.map((t, idx) => (
+                  <div key={`${t.id}_${idx}`} className="p-3 bg-neutral-950 rounded-xl border border-neutral-800/80 flex items-center justify-between group">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="text-xs font-mono text-neutral-500 w-5">{idx + 1}</span>
+                      <img src={t.coverUrl} className="w-10 h-10 rounded-lg object-cover" />
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-white truncate">{t.title}</div>
+                        <div className="text-[11px] text-neutral-400 truncate">{t.artist}</div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setQueue(prev => prev.filter((_, i) => i !== idx));
+                        handlePlayTrack(t);
+                      }}
+                      className="px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500 text-emerald-400 hover:text-black rounded-lg text-xs font-bold transition cursor-pointer"
+                    >
+                      Şimdi Çal
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </main>
+
+      {/* Spotify Bottom Bar Navigation & Sticky Player Bar */}
+      <div className="shrink-0 z-40 flex flex-col">
         <PlayerBar
           currentTrack={currentTrack}
           isPlaying={isPlaying}
@@ -840,6 +869,19 @@ export default function App() {
           onOpenEqualizer={() => setIsEqualizerOpen(true)}
           onOpenOfflineManager={() => setIsOfflineManagerOpen(true)}
           onStartSongRadio={handleStartSongRadio}
+        />
+
+        {/* Spotify-Style Bottom Nav Bar */}
+        <BottomNavBar
+          activeView={activeView}
+          onSelectView={setActiveView}
+          isOfflineMode={isOfflineMode}
+          onOpenOfflineManager={() => setIsOfflineManagerOpen(true)}
+          onOpenFolderManager={() => setIsFolderManagerOpen(true)}
+          onCreatePlaylist={handleCreatePlaylist}
+          onOpenEqualizer={() => setIsEqualizerOpen(true)}
+          downloadedCount={downloadedCount}
+          totalPlaylistsCount={playlists.length}
         />
       </div>
 
@@ -912,7 +954,7 @@ export default function App() {
         settings={audioSettings}
         onUpdateSettings={setAudioSettings}
         sleepTimerMinutes={sleepTimerMins}
-        onSetSleepTimer={setSleepTimerMins}
+        onSetSleepTimer={handleSetSleepTimer}
       />
 
       <OfflineManagerModal
@@ -929,6 +971,18 @@ export default function App() {
             await handleDownloadAllOffline(pl);
           }
         }}
+        onClearAllOffline={handleClearAllOffline}
+        onPlayTrack={handlePlayTrack}
+      />
+
+      <FolderManagerModal
+        isOpen={isFolderManagerOpen}
+        onClose={() => setIsFolderManagerOpen(false)}
+        folders={folders}
+        playlists={playlists}
+        onCreateFolder={handleCreateFolder}
+        onDeleteFolder={handleDeleteFolder}
+        onAssignPlaylistFolder={handleAssignPlaylistFolder}
       />
 
       <QueueDrawer
@@ -977,7 +1031,6 @@ export default function App() {
         }}
       />
 
-      {/* AI Smart Auto-Expand Playlist Modal */}
       {currentActivePlaylist && (
         <AutoExpandPlaylistModal
           isOpen={isAutoExpandOpen}
@@ -991,7 +1044,6 @@ export default function App() {
         />
       )}
 
-      {/* Private Mode, Backup & Local Storage Modal */}
       <PrivateModeModal
         isOpen={isPrivateModeOpen}
         onClose={() => setIsPrivateModeOpen(false)}
@@ -1004,12 +1056,10 @@ export default function App() {
         onShowToast={showToast}
       />
 
-      {/* Security PIN Lock Screen */}
       {isLocked && (
         <PinLockScreen onUnlock={() => setIsLocked(false)} />
       )}
 
-      {/* PWA Install & Download Modal */}
       <InstallModal
         isOpen={isInstallModalOpen}
         onClose={() => setIsInstallModalOpen(false)}

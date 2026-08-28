@@ -14,6 +14,10 @@ export interface Track {
   fileBlob?: Blob;
   lyrics?: string[];
   timedLyrics?: { time: number; text: string }[];
+  matchedLyric?: string;
+  isOriginal?: boolean;
+  popularity?: number;
+  chartRank?: number;
   addedAt: string;
   addedBy?: {
     id: string;
@@ -52,11 +56,21 @@ export interface SmartRecommendationOptions {
   playlistTracks?: { title: string; artist: string; genre?: string }[];
 }
 
+export interface PlaylistFolder {
+  id: string;
+  name: string;
+  icon?: string;
+  color?: string;
+  description?: string;
+}
+
 export interface Playlist {
   id: string;
   name: string;
   description: string;
   coverUrl: string;
+  folderId?: string;
+  group?: string;
   coverConfig?: {
     type: 'gradient' | 'image' | 'solid';
     gradientStart?: string;
@@ -101,8 +115,22 @@ export interface AudioSettings {
   volume: number;
   muted: boolean;
   playbackRate: number;
+  pitch?: number;
   crossfade: number; // in seconds (0 to 12)
   eqPreset: string;
+  // 10-Band Parametric Equalizer: 32Hz, 64Hz, 125Hz, 250Hz, 500Hz, 1kHz, 2kHz, 4kHz, 8kHz, 16kHz
+  eq10Bands: {
+    b32: number;
+    b64: number;
+    b125: number;
+    b250: number;
+    b500: number;
+    b1k: number;
+    b2k: number;
+    b4k: number;
+    b8k: number;
+    b16k: number;
+  };
   eqBands: {
     bass: number;
     midLow: number;
@@ -111,7 +139,13 @@ export interface AudioSettings {
     treble: number;
   };
   bassBoost: boolean;
+  subBassBoost: boolean;
   spatialAudio: boolean;
+  spatial8DSpeed: number; // 0.1 to 2.0
+  vocalRemover: boolean; // Karaoke vocal isolation / cancellation
+  volumeNormalization: boolean; // ReplayGain Dynamics Compressor
+  highQualityAudio: boolean; // 320kbps HD Audio preference
+  slowedReverb: boolean; // Lo-fi Slowed & Reverb effect
 }
 
 export type RepeatMode = 'off' | 'all' | 'one';

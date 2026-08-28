@@ -51,7 +51,7 @@ export const Sidebar: React.FC<SidebarProps> = memo(({
   return (
     <aside className="w-64 md:w-72 bg-neutral-950 border-r border-neutral-800/80 flex flex-col h-full select-none shrink-0 z-30">
       {/* Brand Header */}
-      <div className="p-6 pb-4 flex items-center justify-between border-b border-neutral-800/40">
+      <div className="p-5 pb-4 flex items-center justify-between border-b border-neutral-800/60 bg-neutral-950/60">
         <div
           onClick={() => {
             if (playlists.length > 0) {
@@ -59,16 +59,19 @@ export const Sidebar: React.FC<SidebarProps> = memo(({
               onSelectView('playlist');
             }
           }}
-          className="flex items-center gap-2.5 cursor-pointer group"
+          className="flex items-center gap-3 cursor-pointer group"
         >
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-emerald-400 flex items-center justify-center shadow-lg shadow-emerald-500/20 group-hover:scale-105 transition">
+          <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-emerald-600 via-emerald-500 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-500/20 group-hover:scale-105 transition">
             <Disc className="w-5 h-5 text-black animate-spin-slow" />
           </div>
           <div>
-            <div className="font-black text-lg text-white tracking-tight flex items-center gap-1">
-              SoundPulse <span className="text-[10px] px-1.5 py-0.2 bg-emerald-500/20 text-emerald-400 font-extrabold rounded">PRO</span>
+            <div className="font-black text-lg text-white tracking-tight flex items-center gap-1.5">
+              <span>SoundPulse</span>
+              <span className="text-[10px] px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 font-extrabold rounded-md border border-emerald-500/30">
+                PRO
+              </span>
             </div>
-            <div className="text-[10px] text-neutral-400 font-medium">Sınırsız Çalma Listesi</div>
+            <div className="text-[11px] text-neutral-400 font-medium">Sınırsız Stüdyo Müzik</div>
           </div>
         </div>
       </div>
@@ -219,23 +222,23 @@ export const Sidebar: React.FC<SidebarProps> = memo(({
                 onSelectPlaylist(playlist.id);
                 onSelectView('playlist');
               }}
-              className={`group flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-semibold cursor-pointer transition ${
+              className={`group flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold cursor-pointer transition ${
                 isSelected
-                  ? 'bg-neutral-800 text-white'
-                  : 'text-neutral-400 hover:text-white hover:bg-neutral-900/60'
+                  ? 'bg-emerald-500/15 text-white border border-emerald-500/30 shadow-md shadow-emerald-500/5'
+                  : 'text-neutral-400 hover:text-white hover:bg-neutral-900/80 border border-transparent'
               }`}
             >
               <div className="flex items-center gap-2.5 min-w-0">
                 <img
                   src={playlist.coverUrl}
                   alt={playlist.name}
-                  className="w-8 h-8 rounded-lg object-cover shrink-0 border border-neutral-800"
+                  className="w-9 h-9 rounded-lg object-cover shrink-0 border border-neutral-800 shadow-xs"
                 />
                 <div className="min-w-0">
-                  <div className={`truncate ${isSelected ? 'text-emerald-400 font-bold' : 'text-neutral-200'}`}>
+                  <div className={`truncate ${isSelected ? 'text-emerald-300 font-bold' : 'text-neutral-200 group-hover:text-white'}`}>
                     {playlist.name}
                   </div>
-                  <div className="text-[10px] text-neutral-400 flex items-center gap-1 truncate">
+                  <div className="text-[10px] text-neutral-400 flex items-center gap-1.5 truncate">
                     {playlist.isCollaborative && <Users className="w-2.5 h-2.5 text-indigo-400 shrink-0" />}
                     <span>{playlist.tracks.length} şarkı</span>
                   </div>
@@ -250,7 +253,7 @@ export const Sidebar: React.FC<SidebarProps> = memo(({
                       onDeletePlaylist(playlist.id);
                     }
                   }}
-                  className="opacity-0 group-hover:opacity-100 p-1 text-neutral-500 hover:text-rose-400 transition"
+                  className="opacity-0 group-hover:opacity-100 p-1.5 text-neutral-500 hover:text-rose-400 rounded-lg hover:bg-neutral-800 transition"
                   title="Listeyi Sil"
                 >
                   <Trash2 className="w-3.5 h-3.5" />

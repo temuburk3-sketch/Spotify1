@@ -9,7 +9,7 @@ interface RecommendationsViewProps {
   playlists: Playlist[];
   currentTrack: Track | null;
   isPlaying: boolean;
-  onPlayTrack: (track: Track) => void;
+  onPlayTrack: (track: Track, contextTracks?: Track[], contextName?: string) => void;
   onAddTrackToPlaylist: (track: Track, playlistId: string) => void;
   onAddToQueue: (track: Track) => void;
   onDownloadTrackOffline: (track: Track) => Promise<void>;
@@ -91,7 +91,7 @@ export const RecommendationsView: React.FC<RecommendationsViewProps> = memo(({
   };
 
   return (
-    <div className="flex-1 overflow-y-auto pb-28 text-neutral-100 select-none">
+    <div className="flex-1 overflow-y-auto pb-56 sm:pb-44 text-neutral-100 select-none custom-scrollbar">
       {/* Top Banner */}
       <div className="relative p-6 md:p-8 bg-gradient-to-b from-indigo-950/70 via-neutral-900/90 to-neutral-900 border-b border-neutral-800">
         <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
@@ -302,7 +302,7 @@ export const RecommendationsView: React.FC<RecommendationsViewProps> = memo(({
                         className="w-full h-full object-cover"
                       />
                       <button
-                        onClick={() => onPlayTrack(track)}
+                        onClick={() => onPlayTrack(track, recommendations, `${MOODS.find(m => m.id === activeMood)?.label || 'Tavsiyeler'}`)}
                         className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-emerald-400 transition"
                       >
                         {isCurrentPlaying ? (
@@ -317,7 +317,7 @@ export const RecommendationsView: React.FC<RecommendationsViewProps> = memo(({
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2">
                         <h3
-                          onClick={() => onPlayTrack(track)}
+                          onClick={() => onPlayTrack(track, recommendations, `${MOODS.find(m => m.id === activeMood)?.label || 'Tavsiyeler'}`)}
                           className="font-bold text-sm text-white hover:text-emerald-400 cursor-pointer truncate"
                         >
                           {track.title}

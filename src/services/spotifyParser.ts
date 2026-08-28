@@ -273,22 +273,40 @@ export async function parseSpotifyUrl(urlInput: string): Promise<SpotifyParsedRe
   return null;
 }
 
-export function createTracksFromSpotifyImport(parsed: SpotifyParsedResult): Track[] {
-  if (parsed.tracks && parsed.tracks.length > 0) {
-    return parsed.tracks;
+export function createTracksFromSpotifyImport(parsed: SpotifyParsedResult, options?: { deduplicate?: boolean; maxTracks?: number }): Track[] {
+  let tracks = parsed.tracks && parsed.tracks.length > 0 ? [...parsed.tracks] : [];
+
+  if (tracks.length === 0) {
+    tracks = [{
+      id: `spotify_track_${Date.now()}_${parsed.id}`,
+      title: parsed.title,
+      artist: parsed.authorName || 'Spotify Sanatçısı',
+      album: parsed.title,
+      duration: 190,
+      coverUrl: parsed.thumbnailUrl || 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=600&auto=format&fit=crop&q=80',
+      audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview122/v4/fb/3c/74/fb3c7480-781d-1830-3edd-fd15bdb23406/mzaf_17024654962565086082.plus.aac.p.m4a',
+      source: 'spotify',
+      spotifyId: parsed.id,
+      addedAt: new Date().toISOString(),
+      genre: 'Pop'
+    }];
   }
 
-  return [{
-    id: `spotify_track_${Date.now()}_${parsed.id}`,
-    title: parsed.title,
-    artist: parsed.authorName || 'Spotify Sanatçısı',
-    album: parsed.title,
-    duration: 190,
-    coverUrl: parsed.thumbnailUrl || 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=600&auto=format&fit=crop&q=80',
-    audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview122/v4/fb/3c/74/fb3c7480-781d-1830-3edd-fd15bdb23406/mzaf_17024654962565086082.plus.aac.p.m4a',
-    source: 'spotify',
-    spotifyId: parsed.id,
-    addedAt: new Date().toISOString(),
-    genre: 'Pop'
-  }];
+  // Deduplicate if requested
+  if (options?.deduplicate) {
+    const seen = new Set<string>();
+    tracks = tracks.filter((t) => {
+      const key = `${t.title.toLowerCase().trim()}_${t.artist.toLowerCase().trim()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  // Cap at maxTracks if specified
+  if (options?.maxTracks && options.maxTracks > 0) {
+    tracks = tracks.slice(0, options.maxTracks);
+  }
+
+  return tracks;
 }

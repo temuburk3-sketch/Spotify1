@@ -1,97 +1,64 @@
 import React, { useState, useEffect, useMemo, memo } from 'react';
-import { Search, Play, Plus, HardDrive, Check, Music, Disc, Sparkles, Loader2, Volume2, Globe, Radio } from 'lucide-react';
+import { 
+  Search, Play, Plus, HardDrive, Check, Music, Disc, Sparkles, Loader2, 
+  Radio, Flame, Trophy, ListPlus, Sparkle, Globe, ArrowRight,
+  TrendingUp, Compass, Headphones, Award, History, X, Trash2, Clock, Zap
+} from 'lucide-react';
 import { Track, Playlist } from '../../types';
 
 interface SearchViewProps {
   playlists: Playlist[];
   currentTrack: Track | null;
   isPlaying: boolean;
-  onPlayTrack: (track: Track) => void;
+  onPlayTrack: (track: Track, contextTracks?: Track[], contextName?: string) => void;
   onAddTrackToPlaylist: (track: Track, playlistId: string) => void;
+  onAddToQueue?: (track: Track) => void;
+  onPlayNext?: (track: Track) => void;
   onDownloadTrackOffline: (track: Track) => Promise<void>;
   onOpenSpotifyImport: () => void;
   onStartSongRadio?: (track: Track) => void;
+  onSaveChartToPlaylist?: (name: string, tracks: Track[]) => void;
 }
 
+type SearchCategory = 'all' | 'lyrics' | 'originals' | 'charts' | 'arabesk' | 'pop' | 'rock' | 'rap' | 'synthwave' | 'lofi';
+
+const SEARCH_CATEGORIES: { id: SearchCategory; label: string; icon: string; query?: string }[] = [
+  { id: 'all', label: 'Tümü & Akıllı Arama', icon: '✨' },
+  { id: 'lyrics', label: 'Şarkı Sözleriyle Ara', icon: '📝' },
+  { id: 'originals', label: 'Orijinal & Popüler', icon: '👑' },
+  { id: 'charts', label: 'Spotify Trendleri & Top 50', icon: '🔥' },
+  { id: 'arabesk', label: 'Arabesk & Damar', icon: '🥀', query: 'Müslüm Gürses Ferdi Tayfur Arabesk' },
+  { id: 'pop', label: 'Türkçe Pop', icon: '🇹🇷', query: 'Türkçe Pop Mert Demir Mabel Matiz' },
+  { id: 'rock', label: 'Anadolu & Türkçe Rock', icon: '🎸', query: 'Barış Manço Duman Rock' },
+  { id: 'rap', label: 'Türkçe Rap', icon: '🎤', query: 'Türkçe Rap Ezhel Ceza Sagopa' },
+  { id: 'synthwave', label: 'Synthwave & Retro', icon: '🌃', query: 'The Weeknd Synthwave 80s' },
+  { id: 'lofi', label: 'Lo-Fi & Chill', icon: '☕', query: 'Lofi Chill Study Beats' }
+];
+
+const SPOTIFY_CHARTS = [
+  { id: 'top50_tr', title: 'Spotify Türkiye Top 50', desc: 'Türkiye\'de şu an listelerin zirvesinde olan en çok dinlenen hitler.', badge: '🇹🇷 Top 50 TR', icon: Trophy, color: 'from-emerald-600 to-teal-950' },
+  { id: 'top50_global', title: 'Spotify Global Top 50', desc: 'Tüm dünyada en çok dinlenen ve listeleri kasıp kavuran hitler.', badge: '🌍 Global Top 50', icon: Globe, color: 'from-blue-600 to-indigo-950' },
+  { id: 'viral50_tr', title: 'Spotify Viral 50 Türkiye', desc: 'Sosyal medyada ve platformlarda en hızlı yükselen ve paylaşılan parçalar.', badge: '⚡ Viral 50 TR', icon: TrendingUp, color: 'from-amber-600 to-rose-950' },
+  { id: 'discover_weekly', title: 'Spotify Haftalık Keşif', desc: 'Müzik zevkine ve ruh haline göre özel olarak derlenen haftalık öneriler.', badge: '✨ Haftalık Keşif', icon: Sparkle, color: 'from-purple-600 to-slate-950' },
+  { id: 'release_radar', title: 'Spotify Release Radar', desc: 'En sevilen sanatçıların yeni çıkan taze single ve albüm parçaları.', badge: '🎯 Yeni Çıkanlar', icon: Compass, color: 'from-rose-600 to-neutral-950' }
+];
+
+const POPULAR_SEARCH_SUGGESTIONS = [
+  { query: 'Mert Demir - Ateşe Düştüm', tag: 'Trend Hit' },
+  { query: 'Mabel Matiz - Antidepresan', tag: 'Popüler' },
+  { query: 'The Weeknd - Blinding Lights', tag: 'Global' },
+  { query: 'Müslüm Gürses - Affet', tag: 'Klasik' },
+  { query: 'Duman - Haberin Yok Ölüyorum', tag: 'Rock' },
+  { query: 'Billie Eilish - Birds of a Feather', tag: 'Yeni' },
+  { query: 'Semicenk - Canın Sağ Olsun', tag: 'Pop' },
+  { query: 'Ezhel - Geceler', tag: 'Rap' }
+];
+
+const RECENT_SEARCHES_STORAGE_KEY = 'soundpulse_recent_search_queries';
+const RECENT_TRACKS_STORAGE_KEY = 'soundpulse_recent_search_tracks';
+
 const clientSearchCache = new Map<string, Track[]>();
-
-const EXPLORE_GENRES = [
-  { name: '🥀 Arabesk & Damar', query: 'Müslüm Gürses Ferdi Tayfur Arabesk', color: 'from-amber-700 to-rose-950', icon: '🥀' },
-  { name: '🇹🇷 Türkçe Pop', query: 'Türkçe Pop', color: 'from-emerald-600 to-teal-900', icon: '🇹🇷' },
-  { name: '🎸 Anadolu Rock', query: 'Barış Manço Duman Rock', color: 'from-blue-600 to-slate-900', icon: '🎸' },
-  { name: '🎤 Türkçe Rap', query: 'Türkçe Rap Hip Hop', color: 'from-orange-600 to-neutral-900', icon: '🎤' },
-  { name: '☕ Lo-Fi & Chill', query: 'Lofi Chill', color: 'from-indigo-600 to-slate-900', icon: '☕' },
-  { name: '🌃 Gece Sürüşü', query: 'Synthwave Drive', color: 'from-purple-600 to-neutral-900', icon: '🌃' },
-  { name: '⚡ Spor & Motivasyon', query: 'Workout Gym EDM', color: 'from-red-600 to-zinc-900', icon: '⚡' },
-];
-
-const CURATED_TOP_HITS: Track[] = [
-  {
-    id: 'curated_1',
-    title: 'Antidepresan',
-    artist: 'Mert Demir, Mabel Matiz',
-    album: 'Antidepresan - Single',
-    duration: 202,
-    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music122/v4/cd/6a/fb/cd6afb23-3442-e7ab-3b39-46f458bcad40/196922249655_Cover.jpg/600x600bb.jpg',
-    audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview122/v4/fb/3c/74/fb3c7480-781d-1830-3edd-fd15bdb23406/mzaf_17024654962565086082.plus.aac.p.m4a',
-    youtubeId: 'i6CSvLvSNZ4',
-    source: 'stream',
-    genre: 'Türkçe Pop',
-    addedAt: new Date().toISOString()
-  },
-  {
-    id: 'curated_2',
-    title: 'Bi’ Tek Ben Anlarım',
-    artist: 'KÖFN',
-    album: 'Bi’ Tek Ben Anlarım - Single',
-    duration: 195,
-    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/49/0b/97/490b976f-3322-3aec-eacc-e3876727a112/cover.jpg/600x600bb.jpg',
-    audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview116/v4/ae/9d/83/ae9d833e-c551-a08e-f9f3-1cb68138d233/mzaf_2262890875392296175.plus.aac.p.m4a',
-    youtubeId: '9TSf2k03HPA',
-    source: 'stream',
-    genre: 'Synth Pop',
-    addedAt: new Date().toISOString()
-  },
-  {
-    id: 'curated_3',
-    title: 'Gülpembe',
-    artist: 'Barış Manço',
-    album: 'Hal Hal',
-    duration: 304,
-    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/96/b5/6f/96b56f34-4bb9-3aa5-add2-5a2504e74562/cover.jpg/600x600bb.jpg',
-    audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/15/84/08/15840844-8e98-e477-10dd-c2a82e30b2a3/mzaf_17204737277130849361.plus.aac.p.m4a',
-    youtubeId: 'oEDAhzMI_3g',
-    source: 'stream',
-    genre: 'Anadolu Rock',
-    addedAt: new Date().toISOString()
-  },
-  {
-    id: 'curated_4',
-    title: 'Blinding Lights',
-    artist: 'The Weeknd',
-    album: 'After Hours',
-    duration: 200,
-    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music125/v4/a6/6e/bf/a66ebf79-5008-8948-b352-a790fc87446b/19UM1IM04638.rgb.jpg/600x600bb.jpg',
-    audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/17/b4/8f/17b48f9a-0b93-6bb8-fe1d-3a16623c2cfb/mzaf_9560252727299052414.plus.aac.p.m4a',
-    youtubeId: 'fHI8X4OXluQ',
-    source: 'stream',
-    genre: 'Synthwave',
-    addedAt: new Date().toISOString()
-  },
-  {
-    id: 'curated_5',
-    title: 'Ateşe Düştüm',
-    artist: 'Mert Demir',
-    album: 'Ateşe Düştüm',
-    duration: 218,
-    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/43/39/bb/4339bbf7-d2c3-22ed-90e7-9a14416780c8/196922638558_Cover.jpg/600x600bb.jpg',
-    audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview126/v4/3c/a3/d1/3ca3d19c-d799-12af-0019-fd694b91812a/mzaf_11591350407176047081.plus.aac.p.m4a',
-    youtubeId: 'RQmXet6kZ-Y',
-    source: 'stream',
-    genre: 'Akustik',
-    addedAt: new Date().toISOString()
-  }
-];
+const clientChartCache = new Map<string, any>();
 
 export const SearchView: React.FC<SearchViewProps> = memo(({
   playlists,
@@ -99,27 +66,161 @@ export const SearchView: React.FC<SearchViewProps> = memo(({
   isPlaying,
   onPlayTrack,
   onAddTrackToPlaylist,
+  onAddToQueue,
+  onPlayNext,
   onDownloadTrackOffline,
   onOpenSpotifyImport,
-  onStartSongRadio
+  onStartSongRadio,
+  onSaveChartToPlaylist
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
+  const [activeCategory, setActiveCategory] = useState<SearchCategory>('all');
   const [isSearchingOnline, setIsSearchingOnline] = useState(false);
   const [onlineSearchResults, setOnlineSearchResults] = useState<Track[]>([]);
-  const [selectedGenre, setSelectedGenre] = useState<string | null>(null);
   const [selectedTrackForAdd, setSelectedTrackForAdd] = useState<Track | null>(null);
 
-  // Live online search with debouncing & instant cache
+  // Search History State
+  const [recentQueries, setRecentQueries] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem(RECENT_SEARCHES_STORAGE_KEY);
+      return saved ? JSON.parse(saved) : ['Mabel Matiz', 'The Weeknd', 'Duman', 'Mert Demir'];
+    } catch {
+      return ['Mabel Matiz', 'The Weeknd', 'Duman'];
+    }
+  });
+
+  const [recentTracks, setRecentTracks] = useState<Track[]>(() => {
+    try {
+      const saved = localStorage.getItem(RECENT_TRACKS_STORAGE_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Spotify Charts State
+  const [activeChartId, setActiveChartId] = useState<string>('top50_tr');
+  const [chartData, setChartData] = useState<{
+    title: string;
+    description: string;
+    coverUrl: string;
+    tracks: Track[];
+  } | null>(null);
+  const [isLoadingChart, setIsLoadingChart] = useState(false);
+
+  // Save history helpers
+  const saveRecentQuery = (q: string) => {
+    const trimmed = q.trim();
+    if (!trimmed || trimmed.length < 2) return;
+    setRecentQueries(prev => {
+      const filtered = prev.filter(item => item.toLowerCase() !== trimmed.toLowerCase());
+      const updated = [trimmed, ...filtered].slice(0, 10);
+      try {
+        localStorage.setItem(RECENT_SEARCHES_STORAGE_KEY, JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Storage save note:', e);
+      }
+      return updated;
+    });
+  };
+
+  const removeRecentQuery = (q: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRecentQueries(prev => {
+      const updated = prev.filter(item => item !== q);
+      try {
+        localStorage.setItem(RECENT_SEARCHES_STORAGE_KEY, JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Storage note:', e);
+      }
+      return updated;
+    });
+  };
+
+  const clearAllRecentQueries = () => {
+    setRecentQueries([]);
+    try {
+      localStorage.removeItem(RECENT_SEARCHES_STORAGE_KEY);
+    } catch (e) {
+      console.warn('Storage note:', e);
+    }
+  };
+
+  const saveRecentTrack = (track: Track) => {
+    setRecentTracks(prev => {
+      const filtered = prev.filter(t => t.id !== track.id && t.title !== track.title);
+      const updated = [track, ...filtered].slice(0, 12);
+      try {
+        localStorage.setItem(RECENT_TRACKS_STORAGE_KEY, JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Storage note:', e);
+      }
+      return updated;
+    });
+  };
+
+  const removeRecentTrack = (trackId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRecentTracks(prev => {
+      const updated = prev.filter(t => t.id !== trackId);
+      try {
+        localStorage.setItem(RECENT_TRACKS_STORAGE_KEY, JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Storage note:', e);
+      }
+      return updated;
+    });
+  };
+
+  const clearAllRecentTracks = () => {
+    setRecentTracks([]);
+    try {
+      localStorage.removeItem(RECENT_TRACKS_STORAGE_KEY);
+    } catch (e) {
+      console.warn('Storage note:', e);
+    }
+  };
+
+  // Load Spotify Chart when charts tab is opened or active chart changes
   useEffect(() => {
-    const trimmed = searchTerm.trim().toLowerCase();
+    if (activeCategory === 'charts') {
+      if (clientChartCache.has(activeChartId)) {
+        setChartData(clientChartCache.get(activeChartId));
+        return;
+      }
+
+      setIsLoadingChart(true);
+      fetch(`/api/spotify/charts?chart=${activeChartId}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data && data.tracks) {
+            clientChartCache.set(activeChartId, data);
+            setChartData(data);
+          }
+        })
+        .catch(err => {
+          console.warn('Spotify charts fetch note:', err);
+        })
+        .finally(() => {
+          setIsLoadingChart(false);
+        });
+    }
+  }, [activeCategory, activeChartId]);
+
+  // Live online search with debouncing & smart caching
+  useEffect(() => {
+    const trimmed = searchTerm.trim();
     if (!trimmed) {
       setOnlineSearchResults([]);
       setIsSearchingOnline(false);
       return;
     }
 
-    if (clientSearchCache.has(trimmed)) {
-      setOnlineSearchResults(clientSearchCache.get(trimmed)!);
+    const searchMode = activeCategory === 'lyrics' ? 'lyrics' : activeCategory === 'originals' ? 'originals' : 'all';
+    const cacheKey = `${trimmed.toLowerCase()}___${searchMode}`;
+
+    if (clientSearchCache.has(cacheKey)) {
+      setOnlineSearchResults(clientSearchCache.get(cacheKey)!);
       setIsSearchingOnline(false);
       return;
     }
@@ -127,12 +228,14 @@ export const SearchView: React.FC<SearchViewProps> = memo(({
     const timer = setTimeout(async () => {
       setIsSearchingOnline(true);
       try {
-        // Try server API search first
-        const apiRes = await fetch(`/api/audio/search?q=${encodeURIComponent(trimmed)}`);
+        saveRecentQuery(trimmed);
+
+        // Backend API search (LRCLIB + Gemini + iTunes + Audius)
+        const apiRes = await fetch(`/api/audio/search?q=${encodeURIComponent(trimmed)}&type=${searchMode}`);
         if (apiRes.ok) {
           const data = await apiRes.json();
-          if (data.results && data.results.length > 0) {
-            clientSearchCache.set(trimmed, data.results);
+          if (data.results && Array.isArray(data.results)) {
+            clientSearchCache.set(cacheKey, data.results);
             setOnlineSearchResults(data.results);
             setIsSearchingOnline(false);
             return;
@@ -140,7 +243,7 @@ export const SearchView: React.FC<SearchViewProps> = memo(({
         }
 
         // Direct iTunes API search fallback
-        const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(trimmed)}&entity=song&limit=15`;
+        const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(trimmed)}&entity=song&limit=20`;
         const res = await fetch(itunesUrl);
         if (res.ok) {
           const d = await res.json();
@@ -154,9 +257,11 @@ export const SearchView: React.FC<SearchViewProps> = memo(({
             audioUrl: item.previewUrl,
             genre: item.primaryGenreName || 'Pop',
             source: 'stream',
+            isOriginal: true,
+            popularity: 85,
             addedAt: new Date().toISOString()
           }));
-          clientSearchCache.set(trimmed, mapped);
+          clientSearchCache.set(cacheKey, mapped);
           setOnlineSearchResults(mapped);
         }
       } catch (err) {
@@ -167,23 +272,26 @@ export const SearchView: React.FC<SearchViewProps> = memo(({
     }, 280);
 
     return () => clearTimeout(timer);
-  }, [searchTerm]);
+  }, [searchTerm, activeCategory]);
 
-  // Combine local playlist tracks + curated top hits with memoization
-  const localAvailableTracks = useMemo(() => {
+  // Curated Fallback Songs if search is blank
+  const curatedHits = useMemo(() => {
     const allTracksMap = new Map<string, Track>();
-    CURATED_TOP_HITS.forEach(t => allTracksMap.set(`${t.title.toLowerCase()}_${t.artist.toLowerCase()}`, t));
     playlists.forEach(p => {
       (p.tracks || []).forEach(t => allTracksMap.set(`${t.title.toLowerCase()}_${t.artist.toLowerCase()}`, t));
     });
+    return Array.from(allTracksMap.values());
+  }, [playlists]);
 
-    return Array.from(allTracksMap.values()).filter((t) => {
-      if (!selectedGenre) return true;
-      return t.genre && t.genre.toLowerCase().includes(selectedGenre.toLowerCase());
-    });
-  }, [playlists, selectedGenre]);
-
-  const displayTracks = searchTerm.trim().length > 0 ? onlineSearchResults : localAvailableTracks;
+  const displayTracks = useMemo(() => {
+    if (activeCategory === 'charts' && chartData) {
+      return chartData.tracks;
+    }
+    if (searchTerm.trim().length > 0) {
+      return onlineSearchResults;
+    }
+    return curatedHits.length > 0 ? curatedHits : [];
+  }, [activeCategory, chartData, searchTerm, onlineSearchResults, curatedHits]);
 
   const formatDuration = (secs: number) => {
     const m = Math.floor(secs / 60);
@@ -191,129 +299,405 @@ export const SearchView: React.FC<SearchViewProps> = memo(({
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
-  return (
-    <div className="flex-1 overflow-y-auto p-6 md:p-8 pb-28 text-neutral-100 select-none custom-scrollbar">
-      <div className="max-w-5xl mx-auto space-y-8">
-        {/* Search Bar */}
-        <div className="relative max-w-xl">
-          <Search className="w-5 h-5 text-emerald-400 absolute left-4 top-3.5" />
-          <input
-            type="text"
-            placeholder="Şarkı, sanatçı veya grup adı yazın (örn: Duman, Ezhel, Taylor Swift, Barış Manço)..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-12 pr-10 py-3.5 bg-neutral-900 border border-neutral-800 rounded-2xl text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-500 shadow-xl transition"
-            autoFocus
-          />
-          {isSearchingOnline ? (
-            <Loader2 className="w-4 h-4 text-emerald-400 animate-spin absolute right-4 top-4" />
-          ) : searchTerm ? (
-            <button
-              onClick={() => setSearchTerm('')}
-              className="absolute right-4 top-3.5 text-xs text-neutral-400 hover:text-white"
-            >
-              Temizle
-            </button>
-          ) : null}
-        </div>
+  const handleCategoryClick = (cat: typeof SEARCH_CATEGORIES[0]) => {
+    setActiveCategory(cat.id);
+    if (cat.query) {
+      setSearchTerm(cat.query);
+      saveRecentQuery(cat.query);
+    } else if (cat.id === 'charts') {
+      setSearchTerm('');
+    }
+  };
 
-        {/* Genre Cards */}
-        <div>
-          <h2 className="text-xs font-bold text-neutral-400 uppercase tracking-wider mb-3">Türler & Popüler Akımlar</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
-            {EXPLORE_GENRES.map((g, idx) => (
+  const handleTrackSelection = (track: Track, contextTracks?: Track[], contextName?: string) => {
+    saveRecentTrack(track);
+    if (searchTerm.trim()) {
+      saveRecentQuery(searchTerm.trim());
+    }
+    onPlayTrack(track, contextTracks, contextName);
+  };
+
+  return (
+    <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 pb-56 sm:pb-44 text-neutral-100 select-none custom-scrollbar">
+      <div className="max-w-5xl mx-auto space-y-7">
+        {/* Search Header & Bar */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h1 className="text-xl md:text-2xl font-black text-white flex items-center gap-2.5">
+              <Search className="w-6 h-6 text-emerald-400" />
+              <span>Müzik & Şarkı Sözü Arama</span>
+            </h1>
+            <button
+              onClick={onOpenSpotifyImport}
+              className="px-3.5 py-1.5 bg-[#1DB954]/15 hover:bg-[#1DB954]/25 text-[#1DB954] border border-[#1DB954]/30 rounded-full text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+            >
+              <Sparkles className="w-3.5 h-3.5" /> Spotify'dan Çek (1000 Max)
+            </button>
+          </div>
+
+          {/* Search Box */}
+          <div className="relative">
+            <Search className="w-5 h-5 text-emerald-400 absolute left-4.5 top-4" />
+            <input
+              type="text"
+              placeholder='Şarkı sözü (örn: "gözlerinin içine baktım"), orijinal şarkıcı veya parça adı yazın...'
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-12 pr-28 py-3.5 bg-neutral-900/90 border border-neutral-800 rounded-2xl text-sm md:text-base text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 shadow-2xl transition"
+              autoFocus
+            />
+            <div className="absolute right-3.5 top-3 flex items-center gap-2">
+              {isSearchingOnline && (
+                <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
+              )}
+              {searchTerm && (
+                <button
+                  onClick={() => setSearchTerm('')}
+                  className="px-2.5 py-1 text-xs text-neutral-400 hover:text-white bg-neutral-800 rounded-lg transition"
+                >
+                  Temizle
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Search Mode & Category Filters */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 custom-scrollbar">
+            {SEARCH_CATEGORIES.map((cat) => (
               <button
-                key={idx}
-                onClick={() => {
-                  if (selectedGenre === g.name) {
-                    setSelectedGenre(null);
-                    setSearchTerm('');
-                  } else {
-                    setSelectedGenre(g.name);
-                    setSearchTerm(g.query);
-                  }
-                }}
-                className={`p-4 rounded-xl bg-gradient-to-br ${g.color} border transition text-left relative overflow-hidden group cursor-pointer ${
-                  selectedGenre === g.name ? 'border-white scale-102 ring-2 ring-emerald-500/50' : 'border-neutral-800 opacity-85 hover:opacity-100'
+                key={cat.id}
+                onClick={() => handleCategoryClick(cat)}
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold shrink-0 transition flex items-center gap-1.5 cursor-pointer ${
+                  activeCategory === cat.id
+                    ? 'bg-emerald-500 text-black shadow-lg shadow-emerald-500/25 scale-102'
+                    : 'bg-neutral-900 hover:bg-neutral-800 text-neutral-300 border border-neutral-800'
                 }`}
               >
-                <span className="text-2xl mb-1 block">{g.icon}</span>
-                <span className="text-xs font-bold text-white block leading-tight">{g.name}</span>
+                <span>{cat.icon}</span>
+                <span>{cat.label}</span>
               </button>
             ))}
           </div>
         </div>
 
-        {/* Search Results */}
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+        {/* SPOTIFY-STYLE RECENT SEARCHES & SUGGESTIONS (When search is empty and not charts) */}
+        {!searchTerm.trim() && activeCategory !== 'charts' && (
+          <div className="space-y-6">
+            {/* Recent Searches (Son Aramalar - Spotify Style) */}
+            {recentQueries.length > 0 && (
+              <div className="space-y-3 p-4 bg-neutral-950/60 rounded-2xl border border-neutral-800/80">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold text-neutral-300 uppercase tracking-wider flex items-center gap-2">
+                    <History className="w-4 h-4 text-emerald-400" />
+                    <span>Son Arama Geçmişiniz</span>
+                  </h3>
+                  <button
+                    onClick={clearAllRecentQueries}
+                    className="text-[11px] text-neutral-500 hover:text-rose-400 font-semibold transition cursor-pointer flex items-center gap-1"
+                  >
+                    <Trash2 className="w-3 h-3" /> Geçmişi Temizle
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {recentQueries.map((query, i) => (
+                    <div
+                      key={i}
+                      onClick={() => setSearchTerm(query)}
+                      className="group flex items-center gap-2 px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-neutral-200 hover:text-white rounded-full text-xs font-semibold border border-neutral-800 hover:border-neutral-700 transition cursor-pointer"
+                    >
+                      <Clock className="w-3 h-3 text-neutral-500 group-hover:text-emerald-400 transition" />
+                      <span>{query}</span>
+                      <button
+                        onClick={(e) => removeRecentQuery(query, e)}
+                        className="p-0.5 text-neutral-500 hover:text-white rounded-full hover:bg-neutral-700 transition"
+                        title="Aramayı Kaldır"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Recently Clicked / Played Tracks in Search (Son Dinlenen / Tıklanan Parçalar) */}
+            {recentTracks.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold text-neutral-300 uppercase tracking-wider flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-emerald-400" />
+                    <span>Son Dinlediğiniz Parçalar</span>
+                  </h3>
+                  <button
+                    onClick={clearAllRecentTracks}
+                    className="text-[11px] text-neutral-500 hover:text-neutral-300 font-semibold transition cursor-pointer"
+                  >
+                    Tümünü Temizle
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                  {recentTracks.slice(0, 6).map((trk) => (
+                    <div
+                      key={trk.id}
+                      onClick={() => handleTrackSelection(trk, recentTracks, 'Son Aramalar')}
+                      className="group relative p-2.5 rounded-xl bg-neutral-900/80 hover:bg-neutral-800/90 border border-neutral-800/60 hover:border-neutral-700 transition cursor-pointer"
+                    >
+                      <div className="relative aspect-square rounded-lg overflow-hidden mb-2 bg-neutral-950">
+                        <img src={trk.coverUrl} alt={trk.title} className="w-full h-full object-cover" />
+                        <button
+                          onClick={(e) => removeRecentTrack(trk.id, e)}
+                          className="absolute top-1 right-1 p-1 bg-black/70 hover:bg-rose-600 text-white rounded-full opacity-0 group-hover:opacity-100 transition z-10"
+                          title="Listeden Kaldır"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                        <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+                          <Play className="w-6 h-6 text-white fill-white" />
+                        </div>
+                      </div>
+                      <div className="text-xs font-bold text-white truncate">{trk.title}</div>
+                      <div className="text-[10px] text-neutral-400 truncate">{trk.artist}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Popular Search Suggestions (Popüler Arama Önerileri) */}
+            <div className="space-y-3 p-4 bg-gradient-to-r from-emerald-950/20 via-neutral-900/60 to-neutral-950 rounded-2xl border border-emerald-500/20">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold text-emerald-300 uppercase tracking-wider flex items-center gap-1.5">
+                  <TrendingUp className="w-4 h-4 text-emerald-400" />
+                  <span>Popüler Arama Önerileri</span>
+                </h3>
+                <span className="text-[10px] text-emerald-400/80 font-bold">Trend Müzikler</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
+                {POPULAR_SEARCH_SUGGESTIONS.map((sug, i) => (
+                  <button
+                    key={i}
+                    onClick={() => {
+                      setSearchTerm(sug.query);
+                      saveRecentQuery(sug.query);
+                    }}
+                    className="flex items-center justify-between p-2.5 bg-neutral-900/80 hover:bg-neutral-800 rounded-xl border border-neutral-800 hover:border-emerald-500/40 text-left transition cursor-pointer group"
+                  >
+                    <div className="min-w-0 pr-2">
+                      <div className="text-xs font-bold text-neutral-200 group-hover:text-white truncate">
+                        {sug.query}
+                      </div>
+                      <span className="text-[10px] text-emerald-400 font-semibold">{sug.tag}</span>
+                    </div>
+                    <ArrowRight className="w-3.5 h-3.5 text-neutral-500 group-hover:text-emerald-400 shrink-0 transition transform group-hover:translate-x-0.5" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* SPOTIFY CHARTS SECTION */}
+        {activeCategory === 'charts' ? (
+          <div className="space-y-6">
+            {/* Chart Subtabs */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2.5">
+              {SPOTIFY_CHARTS.map((chart) => {
+                const isSelected = activeChartId === chart.id;
+                const IconComponent = chart.icon;
+                return (
+                  <button
+                    key={chart.id}
+                    onClick={() => setActiveChartId(chart.id)}
+                    className={`p-3.5 rounded-2xl bg-gradient-to-br ${chart.color} border transition text-left relative overflow-hidden cursor-pointer ${
+                      isSelected ? 'border-white ring-2 ring-emerald-500 shadow-xl scale-102' : 'border-neutral-800/80 opacity-75 hover:opacity-100'
+                    }`}
+                  >
+                    <IconComponent className="w-5 h-5 text-white mb-2" />
+                    <span className="text-xs font-extrabold text-white block leading-tight">{chart.badge}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Chart Header Banner */}
+            {chartData && (
+              <div className="p-6 rounded-2xl bg-gradient-to-r from-neutral-900 to-neutral-950 border border-neutral-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-xl">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-full bg-[#1DB954]/20 text-[#1DB954] text-[11px] font-extrabold">
+                      SPOTIFY RESMİ LİSTESİ
+                    </span>
+                    <span className="text-xs text-neutral-400">Canlı & Güncel</span>
+                  </div>
+                  <h2 className="text-lg md:text-xl font-black text-white">{chartData.title}</h2>
+                  <p className="text-xs text-neutral-400 max-w-xl">{chartData.description}</p>
+                </div>
+
+                <div className="flex items-center gap-2.5 shrink-0">
+                  <button
+                    onClick={() => {
+                      if (chartData.tracks.length > 0) {
+                        handleTrackSelection(chartData.tracks[0], chartData.tracks, chartData.title);
+                      }
+                    }}
+                    className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-bold rounded-xl transition flex items-center gap-2 shadow-lg shadow-emerald-500/20 cursor-pointer"
+                  >
+                    <Play className="w-4 h-4 fill-black" /> Tümünü Çal
+                  </button>
+                  {onSaveChartToPlaylist && (
+                    <button
+                      onClick={() => onSaveChartToPlaylist(chartData.title, chartData.tracks)}
+                      className="px-4 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 border border-neutral-700 cursor-pointer"
+                    >
+                      <ListPlus className="w-4 h-4 text-emerald-400" /> Listelerime Kaydet
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : null}
+
+        {/* RESULTS SECTION */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-bold text-neutral-300 uppercase tracking-wider flex items-center gap-2">
               <Music className="w-4 h-4 text-emerald-400" />
-              {searchTerm.trim() ? (
-                <span>Çevrimiçi Orijinal Şarkı Sonuçları ({displayTracks.length})</span>
+              {activeCategory === 'charts' ? (
+                <span>{chartData?.title || 'Spotify Trend Listesi'} ({displayTracks.length} Şarkı)</span>
+              ) : activeCategory === 'lyrics' ? (
+                <span>Şarkı Sözü Eşleşmeleri ({displayTracks.length} Sonuç)</span>
+              ) : searchTerm.trim() ? (
+                <span>Orijinal ve Popüler Şarkı Sonuçları ({displayTracks.length})</span>
               ) : (
                 <span>Öne Çıkan & Listelerinizdeki Şarkılar ({displayTracks.length})</span>
               )}
             </h2>
-            <button
-              onClick={onOpenSpotifyImport}
-              className="text-xs text-[#1DB954] hover:underline flex items-center gap-1 font-semibold cursor-pointer"
-            >
-              <Sparkles className="w-3.5 h-3.5" /> Spotify Linkinden Çalma Listesi Çek
-            </button>
+
+            {searchTerm && (
+              <span className="text-xs text-neutral-500 font-medium">
+                Öncelik: Orijinal Sanatçı & Popülerlik
+              </span>
+            )}
           </div>
 
-          {displayTracks.length === 0 && !isSearchingOnline ? (
+          {/* Empty / Loading States */}
+          {isLoadingChart || (isSearchingOnline && displayTracks.length === 0) ? (
+            <div className="p-16 text-center border border-neutral-800 rounded-2xl bg-neutral-950/40 space-y-3">
+              <Loader2 className="w-8 h-8 text-emerald-400 animate-spin mx-auto" />
+              <p className="text-xs text-neutral-400">Şarkılar, sözler ve orijinal sanatçılar aranıyor...</p>
+            </div>
+          ) : displayTracks.length === 0 ? (
             <div className="p-12 text-center border border-dashed border-neutral-800 rounded-2xl bg-neutral-950/40 space-y-3">
               <Disc className="w-10 h-10 text-neutral-600 mx-auto" />
-              <p className="text-sm text-neutral-400">Aradığınız şarkı bulunamadı. Farklı bir isim veya sanatçı deneyin.</p>
+              <p className="text-sm text-neutral-300 font-semibold">Aradığınız kriterlere uygun şarkı bulunamadı</p>
+              <p className="text-xs text-neutral-500 max-w-md mx-auto">
+                Şarkı sözünden birkaç kelime veya sanatçı adını yazmayı deneyebilirsiniz.
+              </p>
               <button
                 onClick={onOpenSpotifyImport}
-                className="mt-2 px-5 py-2.5 bg-[#1DB954] hover:bg-[#1ed760] text-black text-xs font-bold rounded-full transition"
+                className="mt-2 px-5 py-2.5 bg-[#1DB954] hover:bg-[#1ed760] text-black text-xs font-bold rounded-full transition cursor-pointer"
               >
-                Spotify'dan Direkt İçe Aktar
+                Spotify Linkinden Direkt İçe Aktar (1000 Max)
               </button>
             </div>
           ) : (
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               {displayTracks.map((track, idx) => {
                 const isCurrent = currentTrack?.id === track.id || currentTrack?.title === track.title;
                 const isCurrentPlaying = isCurrent && isPlaying;
+                const contextName = activeCategory === 'charts' 
+                  ? (chartData?.title || 'Spotify Trendleri') 
+                  : searchTerm.trim() 
+                  ? `"${searchTerm}" Arama Sonuçları` 
+                  : 'Keşfet & Öne Çıkanlar';
 
                 return (
                   <div
                     key={`${track.id}_${idx}`}
-                    className={`group flex items-center justify-between p-2.5 rounded-xl border transition ${
+                    className={`group flex flex-col sm:flex-row sm:items-center justify-between p-3 rounded-2xl border transition gap-3 ${
                       isCurrent
-                        ? 'bg-emerald-500/15 border-emerald-500/40'
-                        : 'bg-neutral-950/60 hover:bg-neutral-900 border-neutral-900 hover:border-neutral-800'
+                        ? 'bg-emerald-500/15 border-emerald-500/50 shadow-md'
+                        : 'bg-neutral-950/70 hover:bg-neutral-900 border-neutral-900 hover:border-neutral-800'
                     }`}
                   >
-                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                    {/* Left: Rank / Play Button + Artwork + Title + Lyric Snippet */}
+                    <div className="flex items-center gap-3.5 min-w-0 flex-1">
+                      {/* Chart Rank if in charts */}
+                      {track.chartRank ? (
+                        <span className="w-6 text-center text-sm font-black text-emerald-400 shrink-0 font-mono">
+                          #{track.chartRank}
+                        </span>
+                      ) : (
+                        <span className="w-5 text-center text-xs font-mono text-neutral-600 group-hover:text-neutral-400 shrink-0">
+                          {idx + 1}
+                        </span>
+                      )}
+
+                      {/* Cover Thumbnail with Play overlay */}
                       <button
-                        onClick={() => onPlayTrack(track)}
-                        className="w-11 h-11 rounded-lg overflow-hidden relative shrink-0 group/play shadow cursor-pointer"
+                        onClick={() => handleTrackSelection(track, displayTracks, contextName)}
+                        className="w-12 h-12 rounded-xl overflow-hidden relative shrink-0 group/play shadow-md cursor-pointer"
                       >
                         <img src={track.coverUrl} alt={track.title} className="w-full h-full object-cover" />
                         <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover/play:opacity-100 transition">
-                          <Play className="w-4 h-4 text-white fill-white" />
+                          <Play className="w-5 h-5 text-white fill-white" />
                         </div>
+                        {isCurrentPlaying && (
+                          <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                            <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+                          </div>
+                        )}
                       </button>
 
-                      <div className="min-w-0 flex-1">
-                        <div className={`text-xs md:text-sm font-semibold truncate ${isCurrent ? 'text-emerald-400 font-bold' : 'text-white'}`}>
-                          {track.title}
+                      {/* Song Details & Badges */}
+                      <div
+                        onClick={() => handleTrackSelection(track, displayTracks, contextName)}
+                        className="min-w-0 flex-1 cursor-pointer space-y-1"
+                      >
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={`text-sm font-bold truncate ${isCurrent ? 'text-emerald-400' : 'text-white'}`}>
+                            {track.title}
+                          </span>
+
+                          {/* Verified Original Artist Badge */}
+                          {track.isOriginal && (
+                            <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-[10px] font-extrabold flex items-center gap-1">
+                              <Award className="w-3 h-3" /> Orijinal
+                            </span>
+                          )}
+
+                          {/* High Popularity Flame Badge */}
+                          {track.popularity && track.popularity >= 88 && (
+                            <span className="px-1.5 py-0.5 rounded-md bg-rose-500/20 text-rose-300 text-[10px] font-bold flex items-center gap-0.5">
+                              <Flame className="w-3 h-3 text-rose-400" /> Popüler
+                            </span>
+                          )}
                         </div>
-                        <div className="text-[11px] text-neutral-400 truncate flex items-center gap-1.5">
-                          <span>{track.artist}</span>
+
+                        {/* Artist & Genre */}
+                        <div className="text-xs text-neutral-400 truncate flex items-center gap-1.5">
+                          <span className="font-semibold text-neutral-300">{track.artist}</span>
                           <span className="text-neutral-600">•</span>
                           <span className="text-neutral-500">{track.album || track.genre || 'Müzik'}</span>
                         </div>
+
+                        {/* Matched Lyric Snippet Badge (Spotify-style) */}
+                        {track.matchedLyric && (
+                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-200 text-[11px] font-medium mt-1">
+                            <span className="font-bold text-amber-400">📝 Söz Eşleşmesi:</span>
+                            <span className="italic">{track.matchedLyric}</span>
+                          </div>
+                        )}
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-[11px] font-mono text-neutral-400 hidden sm:inline mr-1">
+                    {/* Right: Quick Action Controls */}
+                    <div className="flex items-center justify-end gap-1.5 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-neutral-900">
+                      <span className="text-xs font-mono text-neutral-500 mr-2 hidden md:inline">
                         {formatDuration(track.duration)}
                       </span>
 
@@ -322,30 +706,54 @@ export const SearchView: React.FC<SearchViewProps> = memo(({
                         <button
                           onClick={() => onStartSongRadio(track)}
                           className="flex items-center gap-1 px-2.5 py-1.5 bg-neutral-900 hover:bg-amber-500/20 text-neutral-300 hover:text-amber-400 rounded-xl text-xs font-bold border border-neutral-800 transition cursor-pointer"
-                          title="Bu şarkının tarzında radyo başlat"
+                          title="Bu şarkının tarzında otomatik radyo başlat"
                         >
-                          <Radio className="w-3.5 h-3.5" /> <span className="hidden md:inline">Radyo</span>
+                          <Radio className="w-3.5 h-3.5" /> <span className="hidden lg:inline">Radyo</span>
+                        </button>
+                      )}
+
+                      {/* Play Next (Sıradaki Yap) */}
+                      {onPlayNext && (
+                        <button
+                          onClick={() => onPlayNext(track)}
+                          className="px-2.5 py-1.5 bg-neutral-900 hover:bg-emerald-500/20 text-neutral-300 hover:text-emerald-300 rounded-xl text-xs font-semibold border border-neutral-800 transition cursor-pointer"
+                          title="Hemen bir sonraki şarkı olarak çal"
+                        >
+                          Sıradaki
+                        </button>
+                      )}
+
+                      {/* Add to Queue (Sıraya Ekle) */}
+                      {onAddToQueue && (
+                        <button
+                          onClick={() => onAddToQueue(track)}
+                          className="p-2 bg-neutral-900 hover:bg-neutral-800 text-neutral-400 hover:text-white rounded-xl border border-neutral-800 transition cursor-pointer"
+                          title="Çalma sırasının sonuna ekle"
+                        >
+                          <ListPlus className="w-4 h-4" />
                         </button>
                       )}
 
                       {/* Download offline */}
                       <button
                         onClick={() => onDownloadTrackOffline(track)}
-                        className={`p-2 rounded-lg hover:bg-neutral-800 transition cursor-pointer ${
-                          track.isOfflineCached ? 'text-emerald-400' : 'text-neutral-400 hover:text-white'
+                        className={`p-2 rounded-xl border transition cursor-pointer ${
+                          track.isOfflineCached
+                            ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
+                            : 'bg-neutral-900 hover:bg-neutral-800 border-neutral-800 text-neutral-400 hover:text-white'
                         }`}
-                        title={track.isOfflineCached ? 'İndirildi' : 'Çevrimdışı İndir'}
+                        title={track.isOfflineCached ? 'Cihaza İndirildi (Çevrimdışı)' : 'Çevrimdışı İndir'}
                       >
                         {track.isOfflineCached ? <Check className="w-4 h-4" /> : <HardDrive className="w-4 h-4" />}
                       </button>
 
-                      {/* Add to playlist dropdown / button */}
+                      {/* Add to Playlist */}
                       <button
                         onClick={() => setSelectedTrackForAdd(track)}
-                        className="flex items-center gap-1 px-3 py-1.5 bg-neutral-900 hover:bg-emerald-500/20 text-neutral-300 hover:text-emerald-400 rounded-xl text-xs font-bold border border-neutral-800 transition cursor-pointer"
-                        title="Listeye Ekle"
+                        className="flex items-center gap-1 px-3 py-1.5 bg-neutral-900 hover:bg-emerald-500/25 text-neutral-200 hover:text-emerald-300 rounded-xl text-xs font-bold border border-neutral-800 transition cursor-pointer"
+                        title="Listelerime Ekle"
                       >
-                        <Plus className="w-3.5 h-3.5" /> Listeme Ekle
+                        <Plus className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Listeme Ekle</span>
                       </button>
                     </div>
                   </div>

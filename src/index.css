@@ -1,1 +1,28 @@
 @import "tailwindcss";
+
+@layer utilities {
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 16px);
+  }
+  .pb-safe-bottom {
+    padding-bottom: calc(env(safe-area-inset-bottom, 16px) + 0.75rem);
+  }
+  .mb-safe {
+    margin-bottom: env(safe-area-inset-bottom, 16px);
+  }
+}
+
+/* Mobile & Touch UX Enhancements */
+html, body {
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Custom scrollbar hiding */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

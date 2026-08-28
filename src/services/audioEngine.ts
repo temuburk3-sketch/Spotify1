@@ -3,13 +3,25 @@ import { getAudioBlobFromCache } from './storage';
 
 class AudioEngine {
   private audio: HTMLAudioElement;
+  private prefetchAudio: HTMLAudioElement | null = null;
+  private prefetchedTrackId: string | null = null;
   private ctx: AudioContext | null = null;
   private sourceNode: MediaElementAudioSourceNode | null = null;
   private analyser: AnalyserNode | null = null;
   private gainNode: GainNode | null = null;
+  private compressor: DynamicsCompressorNode | null = null;
+  private pannerNode: StereoPannerNode | null = null;
   private bassFilter: BiquadFilterNode | null = null;
-  private eqFilters: BiquadFilterNode[] = [];
+  private subBassFilter: BiquadFilterNode | null = null;
+  private vocalFilter: BiquadFilterNode | null = null;
+  private eq10Filters: BiquadFilterNode[] = [];
   private isInitialized = false;
+
+  // 8D Spatial Audio Auto-Panner LFO
+  private isSpatialActive = false;
+  private spatialSpeed = 0.5;
+  private spatialInterval: any = null;
+  private spatialPhase = 0;
 
   // Active Playback Mode
   private activeMode: 'html5' | 'youtube' | 'synth' = 'html5';
@@ -47,6 +59,16 @@ class AudioEngine {
   private currentEffectiveVolume = 0.85;
   private fadeInterval: any = null;
   private isTransitioning = false;
+  private crossfadeSeconds = 0;
+
+  // True Shuffle Memory Tracker (guarantees full permutation without repeat)
+  private shuffleHistory: string[] = [];
+  private shuffleRemaining: string[] = [];
+
+  // Sleep Timer with smooth fade-out
+  private sleepTimerId: any = null;
+  private sleepTimerEndTs: number | null = null;
+  private onSleepTimerComplete: (() => void) | null = null;
 
   // MediaSession Action Handler Cache
   private actionHandlers: {
@@ -362,29 +384,76 @@ class AudioEngine {
       this.analyser.fftSize = 256;
       this.gainNode = this.ctx.createGain();
 
-      const frequencies = [60, 250, 1000, 4000, 12000];
-      const types: BiquadFilterType[] = ['lowshelf', 'peaking', 'peaking', 'peaking', 'highshelf'];
+      // Dynamics Compressor for Volume Normalization / ReplayGain
+      this.compressor = this.ctx.createDynamicsCompressor();
+      this.compressor.threshold.setValueAtTime(-24, this.ctx.currentTime);
+      this.compressor.knee.setValueAtTime(30, this.ctx.currentTime);
+      this.compressor.ratio.setValueAtTime(12, this.ctx.currentTime);
+      this.compressor.attack.setValueAtTime(0.003, this.ctx.currentTime);
+      this.compressor.release.setValueAtTime(0.25, this.ctx.currentTime);
 
-      this.eqFilters = frequencies.map((freq, index) => {
-        const filter = this.ctx!.createBiquadFilter();
-        filter.type = types[index];
-        filter.frequency.value = freq;
-        filter.gain.value = 0;
-        return filter;
-      });
+      // Stereo Panner for 3D & 8D Spatial Audio
+      if (typeof this.ctx.createStereoPanner === 'function') {
+        this.pannerNode = this.ctx.createStereoPanner();
+      }
 
+      // Vocal Remover / Center Notch Filter (Center-Channel Vocal Subtraction simulation)
+      this.vocalFilter = this.ctx.createBiquadFilter();
+      this.vocalFilter.type = 'peaking';
+      this.vocalFilter.frequency.value = 1000;
+      this.vocalFilter.Q.value = 1.2;
+      this.vocalFilter.gain.value = 0;
+
+      // Sub-Bass Boost Filter (45Hz Low-Shelf)
+      this.subBassFilter = this.ctx.createBiquadFilter();
+      this.subBassFilter.type = 'lowshelf';
+      this.subBassFilter.frequency.value = 45;
+      this.subBassFilter.gain.value = 0;
+
+      // Bass Boost Filter (100Hz Low-Shelf)
       this.bassFilter = this.ctx.createBiquadFilter();
       this.bassFilter.type = 'lowshelf';
       this.bassFilter.frequency.value = 100;
       this.bassFilter.gain.value = 0;
 
+      // 10-Band Parametric Equalizer: 32Hz, 64Hz, 125Hz, 250Hz, 500Hz, 1kHz, 2kHz, 4kHz, 8kHz, 16kHz
+      const freq10 = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+      this.eq10Filters = freq10.map((freq, idx) => {
+        const filter = this.ctx!.createBiquadFilter();
+        if (idx === 0) filter.type = 'lowshelf';
+        else if (idx === freq10.length - 1) filter.type = 'highshelf';
+        else filter.type = 'peaking';
+        filter.frequency.value = freq;
+        filter.gain.value = 0;
+        filter.Q.value = 1.4;
+        return filter;
+      });
+
+      // Chain nodes: source -> vocalFilter -> subBass -> bass -> eq10[0..9] -> compressor -> panner -> gain -> analyser -> destination
       let lastNode: AudioNode = this.sourceNode;
-      for (const filter of this.eqFilters) {
+      lastNode.connect(this.vocalFilter);
+      lastNode = this.vocalFilter;
+
+      lastNode.connect(this.subBassFilter);
+      lastNode = this.subBassFilter;
+
+      lastNode.connect(this.bassFilter);
+      lastNode = this.bassFilter;
+
+      for (const filter of this.eq10Filters) {
         lastNode.connect(filter);
         lastNode = filter;
       }
-      lastNode.connect(this.bassFilter);
-      this.bassFilter.connect(this.gainNode);
+
+      lastNode.connect(this.compressor);
+      lastNode = this.compressor;
+
+      if (this.pannerNode) {
+        lastNode.connect(this.pannerNode);
+        lastNode = this.pannerNode;
+      }
+
+      lastNode.connect(this.gainNode);
       this.gainNode.connect(this.analyser);
       this.analyser.connect(this.ctx.destination);
 
@@ -549,13 +618,14 @@ class AudioEngine {
       }
     } catch {}
 
-    // 2. If track has youtubeId, play 100% full song via YouTube Engine instantly
+    // 2. If track has youtubeId, play 100% full song via YouTube Engine cleanly & instantly
     if (track.youtubeId) {
+      this.audio.pause();
       return this.playViaYouTube(track.youtubeId, effectiveStart);
     }
 
-    // 3. If local file / blob URL, play via HTML5 Audio element
-    if (track.source === 'local' || (track.audioUrl && (track.audioUrl.startsWith('blob:') || track.audioUrl.startsWith('data:')))) {
+    // 3. If local file / blob URL or verified full stream, play via HTML5 Audio element
+    if (track.source === 'local' || (track.audioUrl && (track.audioUrl.startsWith('blob:') || track.audioUrl.startsWith('data:'))) || (track as any).isFullStream) {
       if (this.ytPlayer && this.ytPlayerReady) {
         try { this.ytPlayer.pauseVideo(); } catch {}
       }
@@ -563,31 +633,13 @@ class AudioEngine {
       return this.playViaHtml5(track, effectiveStart);
     }
 
-    // 4. Instant start via audioUrl (if present) while resolving full YouTube stream in background
-    if (track.audioUrl && track.audioUrl.startsWith('http')) {
-      // Start immediate playback in 0ms so user hears music instantly
-      this.playViaHtml5(track, effectiveStart).catch(() => {});
-
-      // In background, fetch full YouTube source without blocking UI or audio
-      fetch(`/api/audio/full-source?title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(track.artist)}`)
-        .then(r => r.json())
-        .then(data => {
-          if (data.youtubeId && this.currentTrack?.id === track.id) {
-            track.youtubeId = data.youtubeId;
-            if (data.duration && data.duration > 0) {
-              track.duration = data.duration;
-            }
-            const curPos = this.getCurrentTime();
-            // Seamlessly upgrade to full stream
-            this.playViaYouTube(data.youtubeId, curPos);
-          }
-        })
-        .catch(() => {});
-      return;
-    }
-
-    // 5. Resolve official full song source from server
+    // 4. Resolve official full YouTube source first to prevent preview clip interruption
     try {
+      if (this.ytPlayer && this.ytPlayerReady) {
+        try { this.ytPlayer.pauseVideo(); } catch {}
+      }
+      this.audio.pause();
+
       const res = await fetch(`/api/audio/full-source?title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(track.artist)}`);
       if (res.ok) {
         const data = await res.json();
@@ -603,7 +655,7 @@ class AudioEngine {
       console.warn('Full track resolve note:', e);
     }
 
-    // 6. Direct HTML5 stream or iTunes search
+    // 5. Fallback HTML5 stream if YouTube stream is unreachable
     return this.playViaHtml5(track, effectiveStart);
   }
 
@@ -756,17 +808,223 @@ class AudioEngine {
   }
 
   public setEqualizer(settings: AudioSettings['eqBands'], bassBoost: boolean): void {
+    if (!this.isInitialized) this.initWebAudio();
     if (!this.isInitialized) return;
-    if (this.eqFilters.length === 5) {
-      this.eqFilters[0].gain.value = settings.bass;
-      this.eqFilters[1].gain.value = settings.midLow;
-      this.eqFilters[2].gain.value = settings.mid;
-      this.eqFilters[3].gain.value = settings.midHigh;
-      this.eqFilters[4].gain.value = settings.treble;
+
+    // Map 5 bands onto 10 bands if needed
+    if (this.eq10Filters.length === 10) {
+      this.eq10Filters[0].gain.value = settings.bass;
+      this.eq10Filters[1].gain.value = settings.bass * 0.8;
+      this.eq10Filters[2].gain.value = settings.midLow;
+      this.eq10Filters[3].gain.value = settings.midLow * 0.9;
+      this.eq10Filters[4].gain.value = settings.mid;
+      this.eq10Filters[5].gain.value = settings.mid;
+      this.eq10Filters[6].gain.value = settings.midHigh;
+      this.eq10Filters[7].gain.value = settings.midHigh * 0.9;
+      this.eq10Filters[8].gain.value = settings.treble;
+      this.eq10Filters[9].gain.value = settings.treble * 1.1;
     }
+    if (this.bassFilter) {
+      this.bassFilter.gain.value = bassBoost ? 7 : 0;
+    }
+  }
+
+  public set10BandEqualizer(bands: AudioSettings['eq10Bands'], bassBoost: boolean, subBassBoost = false): void {
+    if (!this.isInitialized) this.initWebAudio();
+    if (!this.isInitialized) return;
+
+    if (this.eq10Filters.length === 10) {
+      this.eq10Filters[0].gain.value = bands.b32;
+      this.eq10Filters[1].gain.value = bands.b64;
+      this.eq10Filters[2].gain.value = bands.b125;
+      this.eq10Filters[3].gain.value = bands.b250;
+      this.eq10Filters[4].gain.value = bands.b500;
+      this.eq10Filters[5].gain.value = bands.b1k;
+      this.eq10Filters[6].gain.value = bands.b2k;
+      this.eq10Filters[7].gain.value = bands.b4k;
+      this.eq10Filters[8].gain.value = bands.b8k;
+      this.eq10Filters[9].gain.value = bands.b16k;
+    }
+
     if (this.bassFilter) {
       this.bassFilter.gain.value = bassBoost ? 8 : 0;
     }
+    if (this.subBassFilter) {
+      this.subBassFilter.gain.value = subBassBoost ? 9 : (bassBoost ? 4 : 0);
+    }
+  }
+
+  public setSpatialAudio(enabled: boolean, speed = 0.5): void {
+    this.isSpatialActive = enabled;
+    this.spatialSpeed = Math.max(0.1, Math.min(2.0, speed));
+
+    if (this.spatialInterval) {
+      clearInterval(this.spatialInterval);
+      this.spatialInterval = null;
+    }
+
+    if (!enabled) {
+      if (this.pannerNode && this.ctx) {
+        try {
+          this.pannerNode.pan.setValueAtTime(0, this.ctx.currentTime);
+        } catch {}
+      }
+      return;
+    }
+
+    // 8D Audio dynamic panning rotation (LFO oscillator)
+    this.spatialInterval = setInterval(() => {
+      if (!this.isSpatialActive || !this.pannerNode || !this.ctx || this.ctx.state === 'closed') return;
+      this.spatialPhase += 0.05 * this.spatialSpeed;
+      const panValue = Math.sin(this.spatialPhase) * 0.85;
+      try {
+        this.pannerNode.pan.setValueAtTime(panValue, this.ctx.currentTime);
+      } catch {}
+    }, 40);
+  }
+
+  public setVolumeNormalization(enabled: boolean): void {
+    if (!this.isInitialized) this.initWebAudio();
+    if (!this.compressor || !this.ctx) return;
+    try {
+      if (enabled) {
+        this.compressor.threshold.setValueAtTime(-28, this.ctx.currentTime);
+        this.compressor.ratio.setValueAtTime(14, this.ctx.currentTime);
+      } else {
+        this.compressor.threshold.setValueAtTime(0, this.ctx.currentTime);
+        this.compressor.ratio.setValueAtTime(1, this.ctx.currentTime);
+      }
+    } catch {}
+  }
+
+  public setVocalRemover(enabled: boolean): void {
+    if (!this.isInitialized) this.initWebAudio();
+    if (!this.vocalFilter || !this.ctx) return;
+    try {
+      // Center vocal notch filter: -24dB at 1kHz vocal frequency range
+      if (enabled) {
+        this.vocalFilter.type = 'peaking';
+        this.vocalFilter.frequency.setValueAtTime(1000, this.ctx.currentTime);
+        this.vocalFilter.Q.setValueAtTime(2.0, this.ctx.currentTime);
+        this.vocalFilter.gain.setValueAtTime(-24, this.ctx.currentTime);
+      } else {
+        this.vocalFilter.gain.setValueAtTime(0, this.ctx.currentTime);
+      }
+    } catch {}
+  }
+
+  public setCrossfade(seconds: number): void {
+    this.crossfadeSeconds = Math.max(0, Math.min(12, seconds));
+  }
+
+  public getCrossfade(): number {
+    return this.crossfadeSeconds;
+  }
+
+  // --- Gapless Pre-Fetching Buffer Engine ---
+  public prefetchNextTrack(nextTrack: Track): void {
+    if (!nextTrack || nextTrack.id === this.prefetchedTrackId) return;
+    this.prefetchedTrackId = nextTrack.id;
+
+    // 1. If HTML5 audio stream, prefetch via background Audio object
+    if (nextTrack.audioUrl && (nextTrack.source === 'local' || nextTrack.audioUrl.startsWith('http'))) {
+      try {
+        if (!this.prefetchAudio) {
+          this.prefetchAudio = new Audio();
+          this.prefetchAudio.preload = 'auto';
+        }
+        this.prefetchAudio.src = nextTrack.audioUrl;
+        this.prefetchAudio.load();
+      } catch {}
+    }
+
+    // 2. If YouTube track, resolve official video ID in advance so playback starts in 0ms
+    if (!nextTrack.youtubeId && nextTrack.source !== 'local') {
+      fetch(`/api/audio/full-source?title=${encodeURIComponent(nextTrack.title)}&artist=${encodeURIComponent(nextTrack.artist)}`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.youtubeId) {
+            nextTrack.youtubeId = data.youtubeId;
+            if (data.duration) nextTrack.duration = data.duration;
+          }
+        })
+        .catch(() => {});
+    }
+  }
+
+  // --- True Shuffle Memory Permutation Engine ---
+  public getTrueShuffleNextTrack(playlistTracks: Track[], currentTrackId: string): Track | null {
+    if (!playlistTracks || playlistTracks.length === 0) return null;
+    if (playlistTracks.length === 1) return playlistTracks[0];
+
+    // Filter current track
+    const otherTrackIds = playlistTracks.map(t => t.id).filter(id => id !== currentTrackId);
+
+    // If remaining pool is empty, reshuffle all tracks except current
+    if (this.shuffleRemaining.length === 0) {
+      // Fisher-Yates true random permutation
+      const pool = [...otherTrackIds];
+      for (let i = pool.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [pool[i], pool[j]] = [pool[j], pool[i]];
+      }
+      this.shuffleRemaining = pool;
+    }
+
+    const nextId = this.shuffleRemaining.shift();
+    if (!nextId) return playlistTracks[0];
+
+    this.shuffleHistory.push(nextId);
+    if (this.shuffleHistory.length > 500) this.shuffleHistory.shift();
+
+    const matched = playlistTracks.find(t => t.id === nextId);
+    return matched || playlistTracks[0];
+  }
+
+  public resetShuffleMemory(playlistTracks: Track[]): void {
+    this.shuffleHistory = [];
+    const pool = playlistTracks.map(t => t.id);
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    this.shuffleRemaining = pool;
+  }
+
+  // --- Sleep Timer with Psychoacoustic Fade-out ---
+  public setSleepTimer(minutes: number | null, onFinish?: () => void): void {
+    if (this.sleepTimerId) {
+      clearTimeout(this.sleepTimerId);
+      this.sleepTimerId = null;
+    }
+    this.onSleepTimerComplete = onFinish || null;
+
+    if (minutes === null || minutes <= 0) {
+      this.sleepTimerEndTs = null;
+      return;
+    }
+
+    const durationMs = minutes * 60 * 1000;
+    this.sleepTimerEndTs = Date.now() + durationMs;
+
+    this.sleepTimerId = setTimeout(async () => {
+      // Smoothly fade out volume over 10 seconds before stopping
+      try {
+        await this.fadeOut(9000);
+        this.pause();
+        if (this.onSleepTimerComplete) {
+          this.onSleepTimerComplete();
+        }
+      } catch {}
+      this.sleepTimerEndTs = null;
+    }, durationMs);
+  }
+
+  public getSleepTimerRemaining(): number | null {
+    if (!this.sleepTimerEndTs) return null;
+    const remMs = this.sleepTimerEndTs - Date.now();
+    if (remMs <= 0) return 0;
+    return Math.ceil(remMs / 60000);
   }
 
   public setABLoop(start: number | null, end: number | null, enabled: boolean): void {
