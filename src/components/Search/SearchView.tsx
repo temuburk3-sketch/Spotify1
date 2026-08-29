@@ -2,9 +2,10 @@ import React, { useState, useEffect, useMemo, memo } from 'react';
 import { 
   Search, Play, Plus, HardDrive, Check, Music, Disc, Sparkles, Loader2, 
   Radio, Flame, Trophy, ListPlus, Sparkle, Globe, ArrowRight,
-  TrendingUp, Compass, Headphones, Award, History, X, Trash2, Clock, Zap
+  TrendingUp, Compass, Headphones, Award, History, X, Trash2, Clock, Zap, Heart
 } from 'lucide-react';
 import { Track, Playlist } from '../../types';
+import { isTrackFollowed, toggleFollowTrack, subscribeToFollowChanges, getFollowedTracks, getFollowedArtists } from '../../services/followService';
 
 interface SearchViewProps {
   playlists: Playlist[];
@@ -20,19 +21,135 @@ interface SearchViewProps {
   onSaveChartToPlaylist?: (name: string, tracks: Track[]) => void;
 }
 
-type SearchCategory = 'all' | 'lyrics' | 'originals' | 'charts' | 'arabesk' | 'pop' | 'rock' | 'rap' | 'synthwave' | 'lofi';
+type SearchCategory = 'followed' | 'originals' | 'all' | 'charts' | 'lyrics' | 'arabesk' | 'pop' | 'rock' | 'rap' | 'synthwave' | 'lofi';
 
 const SEARCH_CATEGORIES: { id: SearchCategory; label: string; icon: string; query?: string }[] = [
-  { id: 'all', label: 'Tümü & Akıllı Arama', icon: '✨' },
-  { id: 'lyrics', label: 'Şarkı Sözleriyle Ara', icon: '📝' },
-  { id: 'originals', label: 'Orijinal & Popüler', icon: '👑' },
-  { id: 'charts', label: 'Spotify Trendleri & Top 50', icon: '🔥' },
-  { id: 'arabesk', label: 'Arabesk & Damar', icon: '🥀', query: 'Müslüm Gürses Ferdi Tayfur Arabesk' },
-  { id: 'pop', label: 'Türkçe Pop', icon: '🇹🇷', query: 'Türkçe Pop Mert Demir Mabel Matiz' },
-  { id: 'rock', label: 'Anadolu & Türkçe Rock', icon: '🎸', query: 'Barış Manço Duman Rock' },
-  { id: 'rap', label: 'Türkçe Rap', icon: '🎤', query: 'Türkçe Rap Ezhel Ceza Sagopa' },
-  { id: 'synthwave', label: 'Synthwave & Retro', icon: '🌃', query: 'The Weeknd Synthwave 80s' },
-  { id: 'lofi', label: 'Lo-Fi & Chill', icon: '☕', query: 'Lofi Chill Study Beats' }
+  { id: 'followed', label: '❤️ Takip Ettiklerim', icon: '❤️' },
+  { id: 'originals', label: '👑 Popüler & Orijinal Hit', icon: '👑' },
+  { id: 'all', label: '✨ Tüm Parçalar & Akıllı', icon: '✨' },
+  { id: 'charts', label: '🔥 Spotify Trendleri & Top 50', icon: '🔥' },
+  { id: 'lyrics', label: '📝 Şarkı Sözleriyle Arama', icon: '📝' },
+  { id: 'arabesk', label: '🥀 Arabesk & Damar', icon: '🥀', query: 'Müslüm Gürses Ferdi Tayfur Arabesk' },
+  { id: 'pop', label: '🇹🇷 Türkçe Pop', icon: '🇹🇷', query: 'Türkçe Pop Mert Demir Mabel Matiz' },
+  { id: 'rock', label: '🎸 Türkçe Rock & Anadolu', icon: '🎸', query: 'Barış Manço Duman Rock' },
+  { id: 'rap', label: '🎤 Türkçe Rap & Hip-Hop', icon: '🎤', query: 'Türkçe Rap Ezhel Ceza Sagopa' },
+  { id: 'synthwave', label: '🌃 Synthwave & Retro', icon: '🌃', query: 'The Weeknd Synthwave 80s' },
+  { id: 'lofi', label: '☕ Lo-Fi & Chill', icon: '☕', query: 'Lofi Chill Study Beats' }
+];
+
+const DEFAULT_POPULAR_ORIGINALS: Track[] = [
+  {
+    id: 'pop_orig_1',
+    title: 'Ateşe Düştüm',
+    artist: 'Mert Demir',
+    album: 'Ateşe Düştüm',
+    duration: 231,
+    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/43/39/bb/4339bbf7-d2c3-22ed-90e7-9a14416780c8/196922638558_Cover.jpg/600x600bb.jpg',
+    audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview126/v4/3c/a3/d1/3ca3d19c-d799-12af-0019-fd694b91812a/mzaf_11591350407176047081.plus.aac.p.m4a',
+    genre: 'Akustik / Pop',
+    source: 'stream',
+    isOriginal: true,
+    popularity: 99,
+    addedAt: new Date().toISOString()
+  },
+  {
+    id: 'pop_orig_2',
+    title: 'Antidepresan',
+    artist: 'Mabel Matiz & Mert Demir',
+    album: 'Fatih',
+    duration: 254,
+    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music122/v4/36/53/4e/36534e56-2dbb-5e6f-5777-61c0e3933c07/cover.jpg/600x600bb.jpg',
+    audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview112/v4/46/d6/3b/46d63bc7-0cfc-5b23-2287-e23114a840e6/mzaf_7822964972583803875.plus.aac.p.m4a',
+    genre: 'Türkçe Pop',
+    source: 'stream',
+    isOriginal: true,
+    popularity: 98,
+    addedAt: new Date().toISOString()
+  },
+  {
+    id: 'pop_orig_3',
+    title: 'Affet',
+    artist: 'Müslüm Gürses',
+    album: 'Aşk Tesadüfleri Sever',
+    duration: 268,
+    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music118/v4/bc/f5/a3/bcf5a3c2-dcfb-5542-a4f6-8c4d52f6bfa7/8691531003426.jpg/600x600bb.jpg',
+    audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview125/v4/2d/a6/5e/2da65e23-ee4e-1282-5950-c4083a216c56/mzaf_6733221971707204998.plus.aac.p.m4a',
+    genre: 'Arabesk / Damar',
+    source: 'stream',
+    isOriginal: true,
+    popularity: 99,
+    addedAt: new Date().toISOString()
+  },
+  {
+    id: 'pop_orig_4',
+    title: 'Bir Derdim Var',
+    artist: 'Mor ve Ötesi',
+    album: 'Dünya Yalan Söylüyor',
+    duration: 218,
+    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music124/v4/10/d8/ec/10d8ecf6-02e0-2df5-f674-c361952e42ef/8697407050304.jpg/600x600bb.jpg',
+    audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview125/v4/44/2a/39/442a3928-a554-ce15-e2f4-6e8ca8f515e0/mzaf_9748684784918239097.plus.aac.p.m4a',
+    genre: 'Türkçe Rock',
+    source: 'stream',
+    isOriginal: true,
+    popularity: 98,
+    addedAt: new Date().toISOString()
+  },
+  {
+    id: 'pop_orig_5',
+    title: 'Aman Aman',
+    artist: 'Duman',
+    album: 'Seni Kendime Sakladım',
+    duration: 245,
+    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/ec/3b/b7/ec3bb7c2-d352-7b27-2e1d-85472851eaee/8697407051189.jpg/600x600bb.jpg',
+    audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview115/v4/cf/ae/76/cfae7655-e41c-3b00-349f-ecb60b73c4ee/mzaf_3990666014446419736.plus.aac.p.m4a',
+    genre: 'Türkçe Rock',
+    source: 'stream',
+    isOriginal: true,
+    popularity: 97,
+    addedAt: new Date().toISOString()
+  },
+  {
+    id: 'pop_orig_6',
+    title: 'Blinding Lights',
+    artist: 'The Weeknd',
+    album: 'After Hours',
+    duration: 200,
+    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music125/v4/d5/3d/bf/d53dbfdf-188b-2ee0-77a8-a3f231e64906/20UMGIM10188.rgb.jpg/600x600bb.jpg',
+    audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview115/v4/10/37/ba/1037ba36-056a-1e64-53c8-2e06a735165a/mzaf_10332219491689241088.plus.aac.p.m4a',
+    genre: 'Synthwave / Pop',
+    source: 'stream',
+    isOriginal: true,
+    popularity: 99,
+    addedAt: new Date().toISOString()
+  },
+  {
+    id: 'pop_orig_7',
+    title: 'Neyim Var Ki',
+    artist: 'Ceza ft. Sagopa Kajmer',
+    album: 'Rapstar',
+    duration: 215,
+    coverUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=600',
+    audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/17/b4/8f/17b48f9a-0b93-6bb8-fe1d-3a16623c2cfb/mzaf_9560252727299052414.plus.aac.p.m4a',
+    genre: 'Türkçe Rap',
+    source: 'stream',
+    isOriginal: true,
+    popularity: 99,
+    addedAt: new Date().toISOString()
+  },
+  {
+    id: 'pop_orig_8',
+    title: 'Sen Affetsen Ben Affetmem',
+    artist: 'Bergen',
+    album: 'Acıların Kadını',
+    duration: 278,
+    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music114/v4/91/9a/c0/919ac0c3-f222-beec-c840-7e4070a75d50/8691531001422.jpg/600x600bb.jpg',
+    audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview115/v4/0f/50/4e/0f504e90-c2ae-0d48-6d87-975971db4be7/mzaf_10523275069947990176.plus.aac.p.m4a',
+    genre: 'Arabesk / Damar',
+    source: 'stream',
+    isOriginal: true,
+    popularity: 98,
+    addedAt: new Date().toISOString()
+  }
 ];
 
 const SPOTIFY_CHARTS = [
@@ -47,11 +164,11 @@ const POPULAR_SEARCH_SUGGESTIONS = [
   { query: 'Mert Demir - Ateşe Düştüm', tag: 'Trend Hit' },
   { query: 'Mabel Matiz - Antidepresan', tag: 'Popüler' },
   { query: 'The Weeknd - Blinding Lights', tag: 'Global' },
-  { query: 'Müslüm Gürses - Affet', tag: 'Klasik' },
-  { query: 'Duman - Haberin Yok Ölüyorum', tag: 'Rock' },
-  { query: 'Billie Eilish - Birds of a Feather', tag: 'Yeni' },
-  { query: 'Semicenk - Canın Sağ Olsun', tag: 'Pop' },
-  { query: 'Ezhel - Geceler', tag: 'Rap' }
+  { query: 'Müslüm Gürses - Affet', tag: 'Damar Hit' },
+  { query: 'Duman - Haberin Yok Ölüyorum', tag: 'Rock Klasik' },
+  { query: 'Bergen - Sen Affetsen Ben Affetmem', tag: 'Kült Arabesk' },
+  { query: 'Semicenk - Canın Sağ Olsun', tag: 'Türkçe Pop' },
+  { query: 'Ezhel - Geceler', tag: 'Rap Hit' }
 ];
 
 const RECENT_SEARCHES_STORAGE_KEY = 'soundpulse_recent_search_queries';
@@ -74,18 +191,26 @@ export const SearchView: React.FC<SearchViewProps> = memo(({
   onSaveChartToPlaylist
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeCategory, setActiveCategory] = useState<SearchCategory>('all');
+  const [activeCategory, setActiveCategory] = useState<SearchCategory>('originals');
   const [isSearchingOnline, setIsSearchingOnline] = useState(false);
   const [onlineSearchResults, setOnlineSearchResults] = useState<Track[]>([]);
   const [selectedTrackForAdd, setSelectedTrackForAdd] = useState<Track | null>(null);
+  const [followTick, setFollowTick] = useState(0);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToFollowChanges(() => {
+      setFollowTick(prev => prev + 1);
+    });
+    return unsubscribe;
+  }, []);
 
   // Search History State
   const [recentQueries, setRecentQueries] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem(RECENT_SEARCHES_STORAGE_KEY);
-      return saved ? JSON.parse(saved) : ['Mabel Matiz', 'The Weeknd', 'Duman', 'Mert Demir'];
+      return saved ? JSON.parse(saved) : ['Mabel Matiz', 'Mert Demir', 'Müslüm Gürses', 'The Weeknd', 'Duman'];
     } catch {
-      return ['Mabel Matiz', 'The Weeknd', 'Duman'];
+      return ['Mabel Matiz', 'Mert Demir', 'Müslüm Gürses'];
     }
   });
 
@@ -284,14 +409,21 @@ export const SearchView: React.FC<SearchViewProps> = memo(({
   }, [playlists]);
 
   const displayTracks = useMemo(() => {
+    if (activeCategory === 'followed') {
+      const followed = getFollowedTracks();
+      return followed.length > 0 ? followed : [];
+    }
     if (activeCategory === 'charts' && chartData) {
       return chartData.tracks;
     }
     if (searchTerm.trim().length > 0) {
       return onlineSearchResults;
     }
-    return curatedHits.length > 0 ? curatedHits : [];
-  }, [activeCategory, chartData, searchTerm, onlineSearchResults, curatedHits]);
+    if (activeCategory === 'originals') {
+      return DEFAULT_POPULAR_ORIGINALS;
+    }
+    return curatedHits.length > 0 ? curatedHits : DEFAULT_POPULAR_ORIGINALS;
+  }, [activeCategory, chartData, searchTerm, onlineSearchResults, curatedHits, followTick]);
 
   const formatDuration = (secs: number) => {
     const m = Math.floor(secs / 60);
@@ -592,17 +724,35 @@ export const SearchView: React.FC<SearchViewProps> = memo(({
             </div>
           ) : displayTracks.length === 0 ? (
             <div className="p-12 text-center border border-dashed border-neutral-800 rounded-2xl bg-neutral-950/40 space-y-3">
-              <Disc className="w-10 h-10 text-neutral-600 mx-auto" />
-              <p className="text-sm text-neutral-300 font-semibold">Aradığınız kriterlere uygun şarkı bulunamadı</p>
-              <p className="text-xs text-neutral-500 max-w-md mx-auto">
-                Şarkı sözünden birkaç kelime veya sanatçı adını yazmayı deneyebilirsiniz.
-              </p>
-              <button
-                onClick={onOpenSpotifyImport}
-                className="mt-2 px-5 py-2.5 bg-[#1DB954] hover:bg-[#1ed760] text-black text-xs font-bold rounded-full transition cursor-pointer"
-              >
-                Spotify Linkinden Direkt İçe Aktar (1000 Max)
-              </button>
+              {activeCategory === 'followed' ? (
+                <>
+                  <Heart className="w-10 h-10 text-rose-500/60 mx-auto" />
+                  <p className="text-sm text-neutral-300 font-semibold">Henüz takip ettiğiniz bir şarkı bulunmuyor</p>
+                  <p className="text-xs text-neutral-500 max-w-md mx-auto">
+                    Şarkı kartlarındaki ❤️ kalp butonuna veya oynatıcıdaki "Takip Et" butonuna tıklayarak sevdiğiniz şarkıları buraya ekleyebilirsiniz.
+                  </p>
+                  <button
+                    onClick={() => setActiveCategory('originals')}
+                    className="mt-2 px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-bold rounded-full transition cursor-pointer"
+                  >
+                    Popüler Şarkıları Keşfet
+                  </button>
+                </>
+              ) : (
+                <>
+                  <Disc className="w-10 h-10 text-neutral-600 mx-auto" />
+                  <p className="text-sm text-neutral-300 font-semibold">Aradığınız kriterlere uygun şarkı bulunamadı</p>
+                  <p className="text-xs text-neutral-500 max-w-md mx-auto">
+                    Şarkı sözünden birkaç kelime veya sanatçı adını yazmayı deneyebilirsiniz.
+                  </p>
+                  <button
+                    onClick={onOpenSpotifyImport}
+                    className="mt-2 px-5 py-2.5 bg-[#1DB954] hover:bg-[#1ed760] text-black text-xs font-bold rounded-full transition cursor-pointer"
+                  >
+                    Spotify Linkinden Direkt İçe Aktar (1000 Max)
+                  </button>
+                </>
+              )}
             </div>
           ) : (
             <div className="space-y-2">
@@ -700,6 +850,27 @@ export const SearchView: React.FC<SearchViewProps> = memo(({
                       <span className="text-xs font-mono text-neutral-500 mr-2 hidden md:inline">
                         {formatDuration(track.duration)}
                       </span>
+
+                      {/* Follow Song Button (Heart) */}
+                      {(() => {
+                        const isFollowed = isTrackFollowed(track.id) || isTrackFollowed(track.title);
+                        return (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleFollowTrack(track);
+                            }}
+                            className={`p-2 rounded-xl border transition cursor-pointer ${
+                              isFollowed
+                                ? 'bg-rose-500/20 border-rose-500/40 text-rose-400'
+                                : 'bg-neutral-900 hover:bg-neutral-800 border-neutral-800 text-neutral-400 hover:text-rose-400'
+                            }`}
+                            title={isFollowed ? 'Şarkıyı Takipten Çıkar' : 'Şarkıyı Takip Et (Favorilere Ekle)'}
+                          >
+                            <Heart className={`w-4 h-4 ${isFollowed ? 'fill-rose-500 text-rose-500' : ''}`} />
+                          </button>
+                        );
+                      })()}
 
                       {/* Song Radio */}
                       {onStartSongRadio && (

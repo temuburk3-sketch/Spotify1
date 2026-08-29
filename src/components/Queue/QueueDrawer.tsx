@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, ListMusic, Play, Trash2, ArrowUp, ArrowDown, ThumbsUp, Sparkles, Disc } from 'lucide-react';
+import { X, ListMusic, Play, Trash2, ArrowUp, ArrowDown, ThumbsUp, Sparkles, Disc, Heart } from 'lucide-react';
 import { Track } from '../../types';
+import { isTrackFollowed, toggleFollowTrack, subscribeToFollowChanges } from '../../services/followService';
 
 interface QueueDrawerProps {
   isOpen: boolean;
@@ -26,6 +27,15 @@ export const QueueDrawer: React.FC<QueueDrawerProps> = ({
   onClearQueue,
   onUpvoteTrack
 }) => {
+  const [followTick, setFollowTick] = useState(0);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToFollowChanges(() => {
+      setFollowTick(prev => prev + 1);
+    });
+    return unsubscribe;
+  }, []);
+
   if (!isOpen) return null;
 
   return (
@@ -138,6 +148,27 @@ export const QueueDrawer: React.FC<QueueDrawerProps> = ({
                           <span>{track.upvotes || 0}</span>
                         </button>
                       )}
+
+                      {/* Follow Heart */}
+                      {(() => {
+                        const isFollowed = isTrackFollowed(track.id) || isTrackFollowed(track.title);
+                        return (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleFollowTrack(track);
+                            }}
+                            className={`p-1 rounded-lg transition cursor-pointer ${
+                              isFollowed
+                                ? 'text-rose-500 opacity-100'
+                                : 'text-neutral-500 hover:text-rose-400 opacity-0 group-hover:opacity-100'
+                            }`}
+                            title={isFollowed ? 'Şarkıyı Takipten Çıkar' : 'Şarkıyı Takip Et'}
+                          >
+                            <Heart className={`w-3.5 h-3.5 ${isFollowed ? 'fill-rose-500 text-rose-500' : ''}`} />
+                          </button>
+                        );
+                      })()}
 
                       {/* Reorder Up/Down */}
                       <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition">

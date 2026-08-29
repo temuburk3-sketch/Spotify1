@@ -365,12 +365,31 @@ async function findBestAudioMatch(title: string, artist: string) {
 // Extract Spotify Playlist, Track, or Album with full tracklist & matching original audio
 async function resolveSpotifyUrl(url: string) {
   const trimmed = url.trim();
-  const match = trimmed.match(/open\.spotify\.com\/(playlist|track|album|artist)\/([a-zA-Z0-9]+)/);
-  if (!match) {
-    throw new Error("Geçersiz Spotify bağlantı formatı.");
+  let type: 'playlist' | 'track' | 'album' | 'artist' | 'unknown' = 'unknown';
+  let id = '';
+
+  // Support international localized URLs (/intl-tr/playlist/..., /intl-en/..., etc.), query params, URIs
+  const match = trimmed.match(/open\.spotify\.com\/(?:[a-zA-Z]{2}(?:-[a-zA-Z]{2})?\/)?(?:intl-[a-z]{2}\/)?(playlist|track|album|artist)\/([a-zA-Z0-9]+)/i);
+  if (match) {
+    type = match[1].toLowerCase() as any;
+    id = match[2];
+  } else if (trimmed.startsWith('spotify:')) {
+    const parts = trimmed.split(':');
+    if (parts.length >= 3) {
+      type = parts[1].toLowerCase() as any;
+      id = parts[2].split('?')[0];
+    }
+  } else {
+    const rawIdMatch = trimmed.match(/([a-zA-Z0-9]{22})/);
+    if (rawIdMatch) {
+      id = rawIdMatch[1];
+      type = 'playlist';
+    }
   }
 
-  const [, type, id] = match;
+  if (!id) {
+    throw new Error("Geçersiz Spotify bağlantı formatı. Lütfen geçerli bir Spotify şarkı veya liste linki girin.");
+  }
 
   // 1. Method A: Spotify Web Player API (Retrieves 100% of all tracks without drop or limits)
   const token = await getSpotifyWebToken();
@@ -436,8 +455,8 @@ async function resolveSpotifyUrl(url: string) {
                 album: t.album?.name || listTitle,
                 duration: trkDuration,
                 coverUrl: trkCover,
-                audioUrl: t.preview_url || `https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview122/v4/fb/3c/74/fb3c7480-781d-1830-3edd-fd15bdb23406/mzaf_17024654962565086082.plus.aac.p.m4a`,
-                source: 'spotify',
+                audioUrl: t.preview_url || "",
+                source: 'spotify' as const,
                 spotifyId: trkId,
                 addedAt: new Date().toISOString(),
                 genre: 'Spotify Hit'
@@ -492,8 +511,8 @@ async function resolveSpotifyUrl(url: string) {
             album: albumTitle,
             duration: t.duration_ms ? Math.round(t.duration_ms / 1000) : 190,
             coverUrl: albumCover,
-            audioUrl: t.preview_url || "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview122/v4/fb/3c/74/fb3c7480-781d-1830-3edd-fd15bdb23406/mzaf_17024654962565086082.plus.aac.p.m4a",
-            source: 'spotify',
+            audioUrl: t.preview_url || "",
+            source: 'spotify' as const,
             spotifyId: t.id || `alb_${idx}`,
             addedAt: new Date().toISOString(),
             genre: 'Spotify Album'
@@ -532,8 +551,8 @@ async function resolveSpotifyUrl(url: string) {
               album: tData.album?.name || trkTitle,
               duration: trkDuration,
               coverUrl: trkCover,
-              audioUrl: tData.preview_url || "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview122/v4/fb/3c/74/fb3c7480-781d-1830-3edd-fd15bdb23406/mzaf_17024654962565086082.plus.aac.p.m4a",
-              source: 'spotify',
+              audioUrl: tData.preview_url || "",
+              source: 'spotify' as const,
               spotifyId: tData.id,
               addedAt: new Date().toISOString(),
               genre: 'Spotify Single'
@@ -551,20 +570,36 @@ async function resolveSpotifyUrl(url: string) {
 
   const res = await fetch(embedUrl, {
     headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
     }
   });
 
   if (!res.ok) {
+    // Fallback to oEmbed if embed page returned error
+    const oembedRes = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(`https://open.spotify.com/${type}/${id}`)}`);
+    if (oembedRes.ok) {
+      const oembedData = await oembedRes.json();
+      return {
+        type,
+        id,
+        title: oembedData.title || "Spotify Çalma Listesi",
+        author: oembedData.author_name || "Spotify",
+        coverUrl: oembedData.thumbnail_url || "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80",
+        tracks: []
+      };
+    }
     throw new Error(`Spotify sunucusuna bağlanılamadı (${res.status}).`);
   }
 
   const html = await res.text();
-  const nextDataMatch = html.match(/<script id="__NEXT_DATA__" type="application\/json">([^<]+)<\/script>/);
+  const nextDataMatch = html.match(/<script id="__NEXT_DATA__" type="application\/json">([^<]+)<\/script>/) ||
+                        html.match(/<script id="initial-state" type="application\/json">([^<]+)<\/script>/) ||
+                        html.match(/<script id="session" type="application\/json">([^<]+)<\/script>/);
 
   if (!nextDataMatch) {
-    // Fallback to oEmbed if __NEXT_DATA__ not present
-    const oembedRes = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(trimmed)}`);
+    // Fallback to oEmbed if script json not present
+    const oembedRes = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(`https://open.spotify.com/${type}/${id}`)}`);
     if (oembedRes.ok) {
       const oembedData = await oembedRes.json();
       return {
@@ -580,14 +615,14 @@ async function resolveSpotifyUrl(url: string) {
   }
 
   const nextData = JSON.parse(nextDataMatch[1]);
-  const entity = nextData.props?.pageProps?.state?.data?.entity;
+  const entity = nextData.props?.pageProps?.state?.data?.entity || nextData.entity || nextData;
 
   if (!entity) {
     throw new Error("Spotify listesi veya şarkısı bulunamadı (Özel veya silinmiş olabilir).");
   }
 
   const title = entity.name || entity.title || "Spotify Çalma Listesi";
-  const author = entity.subtitle || entity.artists?.[0]?.name || "Spotify";
+  const author = entity.subtitle || entity.artists?.[0]?.name || entity.owner?.display_name || "Spotify";
   const coverUrl =
     entity.visualIdentity?.image?.[0]?.url ||
     entity.coverArt?.sources?.[0]?.url ||
@@ -600,49 +635,39 @@ async function resolveSpotifyUrl(url: string) {
     rawTracks.push(entity);
   } else if (entity.trackList && Array.isArray(entity.trackList)) {
     rawTracks.push(...entity.trackList);
+  } else if (entity.tracks && Array.isArray(entity.tracks.items)) {
+    rawTracks.push(...entity.tracks.items);
   }
 
-  // Process tracks in parallel chunks
-  const chunkSize = 20;
-  const tracks: any[] = [];
+  // Process tracks
+  const tracks = rawTracks.map((item: any, idx: number) => {
+    const t = item.track || item;
+    const trackTitle = t.title || t.name || `Şarkı #${idx + 1}`;
+    const trackArtist = t.subtitle || (t.artists && t.artists.map((a: any) => a.name).join(", ")) || author;
+    const trackDuration = t.duration ? Math.round(t.duration / 1000) : (t.duration_ms ? Math.round(t.duration_ms / 1000) : 180);
+    const trackSpotifyId = t.id || (t.uri ? t.uri.replace("spotify:track:", "") : `trk_${idx}`);
+    const trackCover =
+      t.coverArt?.sources?.[0]?.url ||
+      t.visualIdentity?.image?.[0]?.url ||
+      t.album?.images?.[0]?.url ||
+      coverUrl;
 
-  for (let i = 0; i < rawTracks.length; i += chunkSize) {
-    const chunk = rawTracks.slice(i, i + chunkSize);
-    const chunkResults = await Promise.all(
-      chunk.map(async (t: any, relIdx: number) => {
-        const idx = i + relIdx;
-        const trackTitle = t.title || t.name || `Şarkı #${idx + 1}`;
-        const trackArtist = t.subtitle || (t.artists && t.artists.map((a: any) => a.name).join(", ")) || author;
-        const trackDuration = t.duration ? Math.round(t.duration / 1000) : (t.duration_ms ? Math.round(t.duration_ms / 1000) : 180);
-        const trackSpotifyId = t.id || (t.uri ? t.uri.replace("spotify:track:", "") : `trk_${idx}`);
-        const trackCover =
-          t.coverArt?.sources?.[0]?.url ||
-          t.visualIdentity?.image?.[0]?.url ||
-          coverUrl;
+    const audioUrl = t.audioPreview?.url || t.preview_url || "";
 
-        let audioUrl = t.audioPreview?.url || t.preview_url;
-
-        if (!audioUrl) {
-          audioUrl = "https://cdn.pixabay.com/download/audio/2022/10/14/audio_9939f792cb.mp3?filename=tuesday-glitch-122753.mp3";
-        }
-
-        return {
-          id: `sp_${trackSpotifyId}_${idx}`,
-          title: trackTitle,
-          artist: trackArtist,
-          album: t.album?.name || title,
-          duration: trackDuration,
-          coverUrl: trackCover,
-          audioUrl: audioUrl,
-          source: 'spotify',
-          spotifyId: trackSpotifyId,
-          addedAt: new Date().toISOString(),
-          genre: 'Spotify Hit'
-        };
-      })
-    );
-    tracks.push(...chunkResults);
-  }
+    return {
+      id: `sp_${trackSpotifyId}_${idx}`,
+      title: trackTitle,
+      artist: trackArtist,
+      album: t.album?.name || title,
+      duration: trackDuration,
+      coverUrl: trackCover,
+      audioUrl: audioUrl,
+      source: 'spotify' as const,
+      spotifyId: trackSpotifyId,
+      addedAt: new Date().toISOString(),
+      genre: 'Spotify Hit'
+    };
+  });
 
   return {
     type,
@@ -863,6 +888,36 @@ Return JSON array with up to 3 best matching real songs:
       }
     } catch (e) {
       console.warn("Audius search API error:", e);
+    }
+
+    // 4. Query Deezer for high-quality original masters & cover art
+    try {
+      const deezerUrl = `https://api.deezer.com/search?q=${encodeURIComponent(query)}&limit=15`;
+      const deezerRes = await fetch(deezerUrl, { headers: { "User-Agent": "SoundPulse/1.0" } });
+      if (deezerRes.ok) {
+        const deezerData = await deezerRes.json();
+        if (Array.isArray(deezerData.data)) {
+          deezerData.data.forEach((item: any) => {
+            const isTributeOrCover = /karaoke|tribute|cover|instrumental|remix by|speed up|slowed|chipmunk|8d audio/i.test(item.title);
+            rawResults.push({
+              id: `deezer_${item.id}`,
+              title: item.title_short || item.title,
+              artist: item.artist?.name || "Sanatçı",
+              album: item.album?.title || item.title,
+              duration: item.duration || 200,
+              coverUrl: item.album?.cover_xl || item.album?.cover_big || item.album?.cover_medium || "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=600",
+              audioUrl: item.preview || "",
+              genre: "Popüler Hit",
+              source: "stream",
+              isOriginal: !isTributeOrCover,
+              popularity: isTributeOrCover ? 35 : (item.rank ? Math.min(99, Math.round(item.rank / 10000)) : 88),
+              addedAt: new Date().toISOString()
+            });
+          });
+        }
+      }
+    } catch (deezerErr) {
+      console.warn("Deezer search API note:", deezerErr);
     }
 
     // 4. Enrich high-priority tracks with Artwork / YouTube Video ID
@@ -1597,97 +1652,148 @@ function parseLrcString(lrc: string): { time: number; text: string }[] {
   return result.sort((a, b) => a.time - b.time);
 }
 
-// Synchronized Lyrics API (LRCLIB + Gemini AI Synced Fallback)
+// Helper function to sanitize song title and artist for maximum lyrics hit rate
+function sanitizeTitleAndArtist(rawTitle: string, rawArtist: string) {
+  let title = (rawTitle || "").trim();
+  let artist = (rawArtist || "").trim();
+
+  // If title is "Artist - Title", separate them
+  if (title.includes(" - ") && (!artist || artist.toLowerCase() === "sanatçı" || artist.toLowerCase() === "spotify")) {
+    const parts = title.split(" - ");
+    artist = parts[0].trim();
+    title = parts.slice(1).join(" - ").trim();
+  }
+
+  // Remove common title junk: (feat. ...), [feat. ...], (Remastered 2020), - Live, - Single, (Official Video)
+  title = title
+    .replace(/\s*[\(\[](?:feat\.|ft\.|with|official|lyric|video|audio|remastered|remaster|live|akustik|acoustic|deluxe|bonus|edit|radio edit).*?[\)\]]/gi, "")
+    .replace(/\s*-\s*(?:Single|Live|Remastered|Remaster|Acoustic|Bonus Track|Original Mix|Edit|Radio Edit|Instrumental).*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  artist = artist
+    .replace(/\s*[\(\[](?:feat\.|ft\.|with).*?[\)\]]/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return { title, artist };
+}
+
+// Synchronized Lyrics API (Multi-tier LRCLIB + Gemini AI Synced Engine)
 app.get("/api/lyrics", async (req, res) => {
   const { title, artist, duration } = req.query;
   if (!title || typeof title !== "string") {
     return res.status(400).json({ error: "title parametresi gereklidir." });
   }
 
-  const songTitle = title.trim();
-  const songArtist = (artist && typeof artist === "string") ? artist.trim() : "";
-  const songDuration = duration ? Math.max(30, Number(duration)) : 200;
+  const rawTitle = title.trim();
+  const rawArtist = (artist && typeof artist === "string") ? artist.trim() : "";
+  const { title: cleanTitle, artist: cleanArtist } = sanitizeTitleAndArtist(rawTitle, rawArtist);
+  const songDuration = duration ? Math.max(30, Number(duration)) : 210;
 
-  const cacheKey = `lyrics_${songTitle.toLowerCase()}___${songArtist.toLowerCase()}`;
+  const cacheKey = `lyrics_${cleanTitle.toLowerCase()}___${cleanArtist.toLowerCase()}`;
   const cached = getCached(lyricsCache, cacheKey);
   if (cached) {
     return res.json(cached);
   }
 
-  // 1. Query LRCLIB for verified synchronized LRC lyrics
+  // 1. Multi-stage LRCLIB queries
   try {
-    const lrclibUrl = `https://lrclib.net/api/get?track_name=${encodeURIComponent(songTitle)}&artist_name=${encodeURIComponent(songArtist)}&duration=${Math.round(songDuration)}`;
-    const lrcRes = await fetch(lrclibUrl, {
-      headers: { "User-Agent": "SoundPulse/1.0 (https://soundpulse.app)" }
-    });
+    const searchEndpoints = [
+      // 1A. Exact match with duration
+      `https://lrclib.net/api/get?track_name=${encodeURIComponent(cleanTitle)}&artist_name=${encodeURIComponent(cleanArtist)}&duration=${Math.round(songDuration)}`,
+      // 1B. Exact match without duration
+      `https://lrclib.net/api/get?track_name=${encodeURIComponent(cleanTitle)}&artist_name=${encodeURIComponent(cleanArtist)}`,
+      // 1C. Search by track and artist
+      `https://lrclib.net/api/search?track_name=${encodeURIComponent(cleanTitle)}&artist_name=${encodeURIComponent(cleanArtist)}`,
+      // 1D. Full query search
+      `https://lrclib.net/api/search?q=${encodeURIComponent(`${cleanTitle} ${cleanArtist}`.trim())}`,
+      // 1E. Search with track title alone if artist had multiple collaborators
+      `https://lrclib.net/api/search?q=${encodeURIComponent(cleanTitle)}`
+    ];
 
-    let lrcData: any = null;
-    if (lrcRes.ok) {
-      lrcData = await lrcRes.json();
-    } else {
-      const searchUrl = `https://lrclib.net/api/search?q=${encodeURIComponent(`${songTitle} ${songArtist}`.trim())}`;
-      const sRes = await fetch(searchUrl, {
-        headers: { "User-Agent": "SoundPulse/1.0 (https://soundpulse.app)" }
-      });
-      if (sRes.ok) {
-        const sData = await sRes.json();
-        if (Array.isArray(sData) && sData.length > 0) {
-          lrcData = sData[0];
-        }
-      }
-    }
+    for (const ep of searchEndpoints) {
+      try {
+        const lrcRes = await fetch(ep, {
+          headers: { "User-Agent": "SoundPulse/1.0 (https://soundpulse.app)" }
+        });
 
-    if (lrcData) {
-      if (lrcData.syncedLyrics) {
-        const timedLyrics = parseLrcString(lrcData.syncedLyrics);
-        if (timedLyrics.length > 0) {
-          const result = {
-            title: songTitle,
-            artist: songArtist,
-            synced: true,
-            timedLyrics,
-            plainLyrics: lrcData.plainLyrics || timedLyrics.map(t => t.text).join("\n"),
-            source: "lrclib"
-          };
-          setCached(lyricsCache, cacheKey, result);
-          return res.json(result);
-        }
-      }
+        if (!lrcRes.ok) continue;
 
-      if (lrcData.plainLyrics) {
-        // Plain text exists, distribute into estimated timed lines
-        const plainLines = lrcData.plainLyrics.split("\n").map((l: string) => l.trim()).filter(Boolean);
-        if (plainLines.length > 0) {
-          const step = Math.max(2.5, (songDuration - 15) / plainLines.length);
-          const timedLyrics = plainLines.map((line: string, idx: number) => ({
-            time: Math.round((8 + idx * step) * 10) / 10,
-            text: line
-          }));
-          const result = {
-            title: songTitle,
-            artist: songArtist,
-            synced: true,
-            timedLyrics,
-            plainLyrics: lrcData.plainLyrics,
-            source: "lrclib_plain"
-          };
-          setCached(lyricsCache, cacheKey, result);
-          return res.json(result);
+        const data = await lrcRes.json();
+        let targetItem: any = null;
+
+        if (Array.isArray(data) && data.length > 0) {
+          // Find best matching item in array
+          targetItem = data.find((d: any) => d.syncedLyrics) || data[0];
+        } else if (data && (data.syncedLyrics || data.plainLyrics)) {
+          targetItem = data;
         }
+
+        if (targetItem) {
+          if (targetItem.syncedLyrics) {
+            const timedLyrics = parseLrcString(targetItem.syncedLyrics);
+            if (timedLyrics.length > 0) {
+              const result = {
+                title: targetItem.trackName || cleanTitle,
+                artist: targetItem.artistName || cleanArtist,
+                synced: true,
+                timedLyrics,
+                plainLyrics: targetItem.plainLyrics || timedLyrics.map(t => t.text).join("\n"),
+                source: "lrclib"
+              };
+              setCached(lyricsCache, cacheKey, result);
+              return res.json(result);
+            }
+          }
+
+          if (targetItem.plainLyrics) {
+            const plainLines = targetItem.plainLyrics
+              .split("\n")
+              .map((l: string) => l.trim())
+              .filter(Boolean);
+
+            if (plainLines.length > 0) {
+              const step = Math.max(2.8, (songDuration - 20) / plainLines.length);
+              const timedLyrics = plainLines.map((line: string, idx: number) => ({
+                time: Math.round((8 + idx * step) * 10) / 10,
+                text: line
+              }));
+
+              const result = {
+                title: targetItem.trackName || cleanTitle,
+                artist: targetItem.artistName || cleanArtist,
+                synced: true,
+                timedLyrics,
+                plainLyrics: targetItem.plainLyrics,
+                source: "lrclib_plain"
+              };
+              setCached(lyricsCache, cacheKey, result);
+              return res.json(result);
+            }
+          }
+        }
+      } catch (epErr) {
+        // Continue to next endpoint
       }
     }
   } catch (e) {
-    console.warn("LRCLIB fetch notice:", e);
+    console.warn("LRCLIB multi-stage notice:", e);
   }
 
   // 2. AI Gemini Real Synced Lyrics Generation (Turkish & International)
   try {
-    const prompt = `You are a music lyrics intelligence engine. Provide the authentic, original, and complete Turkish or original lyrics for "${songTitle}" by "${songArtist}".
-Song approximate duration is ${Math.round(songDuration)} seconds.
-Generate timestamped synchronized lines ("timedLyrics") formatted in ascending seconds from the song intro to outro, matching the natural vocal rhythm and timing of the actual recorded song.
-Also provide the full lyrics text in "plainLyrics".
+    const prompt = `You are a world-class music lyrics encyclopedia.
+Provide the 100% authentic, accurate, and original complete lyrics for the song "${cleanTitle}" by "${cleanArtist}".
+Song approximate length: ${Math.round(songDuration)} seconds.
 
-Return valid JSON.`;
+Requirements:
+1. Provide the REAL and complete lyrics of this exact song in its original language (Turkish, English, etc.).
+2. Break down into synchronized lines ("timedLyrics") formatted in ascending timestamp seconds matching the natural vocal rhythm and timing of the song, from verse 1 intro (~6-15s) to outro.
+3. In "plainLyrics", provide the complete formatted song lyrics text with verses and chorus.
+4. If this is an instrumental track with no vocals, return empty timedLyrics [] and plainLyrics "[Enstrümantal Parça]".
+
+Output strictly valid JSON according to schema.`;
 
     const lyricsSchema = {
       type: Type.OBJECT,
@@ -1710,13 +1816,14 @@ Return valid JSON.`;
 
     const aiLyrics = await generateJsonWithGemini<{ timedLyrics: { time: number; text: string }[]; plainLyrics: string }>(
       prompt,
-      lyricsSchema
+      lyricsSchema,
+      ["gemini-3.7-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"]
     );
 
     if (aiLyrics && Array.isArray(aiLyrics.timedLyrics) && aiLyrics.timedLyrics.length > 0) {
       const result = {
-        title: songTitle,
-        artist: songArtist,
+        title: cleanTitle,
+        artist: cleanArtist,
         synced: true,
         timedLyrics: aiLyrics.timedLyrics.sort((a, b) => a.time - b.time),
         plainLyrics: aiLyrics.plainLyrics || aiLyrics.timedLyrics.map(t => t.text).join("\n"),
@@ -1729,22 +1836,21 @@ Return valid JSON.`;
     console.warn("Gemini lyrics synthesis notice:", geminiErr);
   }
 
-  // 3. Fallback rhythmic placeholder lyrics
+  // 3. Fallback rhythmic lines
   const fallbackResult = {
-    title: songTitle,
-    artist: songArtist,
+    title: cleanTitle,
+    artist: cleanArtist,
     synced: true,
     timedLyrics: [
-      { time: 0, text: `🎵 ${songTitle}` },
-      { time: 8, text: `${songArtist}` },
-      { time: 20, text: "Gözlerinin içine baktım derinden..." },
-      { time: 35, text: "Yollar uzun, geceler sessiz ve serin..." },
-      { time: 52, text: "Bir şarkı başlar içimde birden..." },
-      { time: 70, text: "Unutulmaz anılar kalır geriye..." },
-      { time: 95, text: "Her nota bir hatıra fısıldar..." },
-      { time: 120, text: "SoundPulse ile kesintisiz müzik deneyimi" }
+      { time: 0, text: `🎵 ${cleanTitle}` },
+      { time: 8, text: cleanArtist ? `🎤 ${cleanArtist}` : "SoundPulse Oynatılıyor" },
+      { time: 22, text: "Gözlerimin önünde bir hatıra canlanır..." },
+      { time: 42, text: "Yıldızlar altında sessiz bir gece..." },
+      { time: 64, text: "Melodinin ritmine bırak kendini..." },
+      { time: 92, text: "Unutulmaz ezgiler kalpte yankılanır..." },
+      { time: 125, text: "SoundPulse Canlı Şarkı Sözleri" }
     ],
-    plainLyrics: `${songTitle}\n${songArtist}\n\nSoundPulse Canlı Şarkı Sözleri`,
+    plainLyrics: `${cleanTitle}\n${cleanArtist}\n\nSoundPulse Canlı Şarkı Sözleri`,
     source: "fallback"
   };
 

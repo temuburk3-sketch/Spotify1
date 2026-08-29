@@ -9,7 +9,8 @@ import {
   Radio,
   Sliders,
   Plus,
-  FolderOpen
+  FolderOpen,
+  Mic2
 } from 'lucide-react';
 import { Playlist, PlaylistFolder } from '../../types';
 
@@ -56,6 +57,12 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({
       icon: Sparkles,
       isActive: activeView === 'recommendations',
       highlight: true
+    },
+    {
+      id: 'lyrics' as const,
+      label: 'Sözler',
+      icon: Mic2,
+      isActive: activeView === 'lyrics'
     },
     {
       id: 'queue' as const,

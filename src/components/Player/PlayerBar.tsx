@@ -1,7 +1,8 @@
-import React, { useState, memo } from 'react';
-import { Play, Pause, SkipBack, SkipForward, Repeat, Shuffle, Volume2, VolumeX, Maximize2, Mic2, ListMusic, Sliders, WifiOff, HardDrive, Repeat1, Radio, Sparkles } from 'lucide-react';
+import React, { useState, memo, useEffect } from 'react';
+import { Play, Pause, SkipBack, SkipForward, Repeat, Shuffle, Volume2, VolumeX, Maximize2, Mic2, ListMusic, Sliders, WifiOff, HardDrive, Repeat1, Radio, Sparkles, Heart } from 'lucide-react';
 import { Track, RepeatMode, ShuffleMode, AudioSettings } from '../../types';
 import { detectTrackTheme } from '../../services/recommendationService';
+import { isTrackFollowed, toggleFollowTrack, subscribeToFollowChanges } from '../../services/followService';
 
 interface PlayerBarProps {
   currentTrack: Track | null;
@@ -60,6 +61,25 @@ export const PlayerBar: React.FC<PlayerBarProps> = memo(({
   onOpenOfflineManager,
   onStartSongRadio
 }) => {
+  const [isFollowed, setIsFollowed] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!currentTrack) return;
+    setIsFollowed(isTrackFollowed(currentTrack.id) || isTrackFollowed(currentTrack.title));
+
+    const unsubscribe = subscribeToFollowChanges(() => {
+      setIsFollowed(isTrackFollowed(currentTrack.id) || isTrackFollowed(currentTrack.title));
+    });
+    return unsubscribe;
+  }, [currentTrack?.id, currentTrack?.title]);
+
+  const handleToggleFollow = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!currentTrack) return;
+    const nowFollowed = toggleFollowTrack(currentTrack);
+    setIsFollowed(nowFollowed);
+  };
+
   const formatTime = (secs: number) => {
     if (isNaN(secs) || secs < 0) return '0:00';
     const m = Math.floor(secs / 60);
@@ -142,6 +162,19 @@ export const PlayerBar: React.FC<PlayerBarProps> = memo(({
                   </div>
                 )}
               </div>
+
+              {/* Follow Song Button (Heart) */}
+              <button
+                onClick={handleToggleFollow}
+                className={`p-1.5 sm:p-2 rounded-full transition active:scale-90 cursor-pointer ${
+                  isFollowed
+                    ? 'text-rose-500 bg-rose-500/10'
+                    : 'text-neutral-500 hover:text-rose-400 hover:bg-neutral-800'
+                }`}
+                title={isFollowed ? 'Şarkı Takip Ediliyor (Favori)' : 'Şarkıyı Takip Et'}
+              >
+                <Heart className={`w-4 h-4 ${isFollowed ? 'fill-rose-500 text-rose-500' : ''}`} />
+              </button>
             </>
           ) : (
             <div className="text-xs text-neutral-500 font-medium">Çalınacak şarkı seçin</div>

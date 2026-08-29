@@ -1,5 +1,5 @@
 import React, { useState, memo } from 'react';
-import { Home, Search, Library, PlusCircle, Link as LinkIcon, UploadCloud, Users, WifiOff, HardDrive, Music, Sparkles, Disc, Trash2, Edit3, Check, ShieldCheck, KeyRound, Download, Smartphone } from 'lucide-react';
+import { Home, Search, Library, PlusCircle, Link as LinkIcon, UploadCloud, Users, WifiOff, HardDrive, Music, Sparkles, Disc, Trash2, Edit3, Check, ShieldCheck, KeyRound, Download, Smartphone, Mic2 } from 'lucide-react';
 import { Playlist } from '../types';
 import { getCurrentUser, updateCurrentUser } from '../services/collaboration';
 import { getStoredPIN } from '../services/recommendationService';
@@ -7,9 +7,9 @@ import { getStoredPIN } from '../services/recommendationService';
 interface SidebarProps {
   playlists: Playlist[];
   activePlaylistId: string | null;
-  activeView: 'playlist' | 'search' | 'offline_library' | 'recommendations';
+  activeView: 'playlist' | 'search' | 'offline_library' | 'recommendations' | 'lyrics' | 'queue';
   isOfflineMode: boolean;
-  onSelectView: (view: 'playlist' | 'search' | 'offline_library' | 'recommendations') => void;
+  onSelectView: (view: 'playlist' | 'search' | 'offline_library' | 'recommendations' | 'lyrics' | 'queue') => void;
   onSelectPlaylist: (id: string) => void;
   onCreatePlaylist: () => void;
   onDeletePlaylist: (id: string) => void;
@@ -120,6 +120,23 @@ export const Sidebar: React.FC<SidebarProps> = memo(({
         >
           <Search className="w-4 h-4 text-emerald-400" />
           <span>Keşfet & Spotify Ara</span>
+        </button>
+
+        <button
+          onClick={() => onSelectView('lyrics')}
+          className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-bold transition ${
+            activeView === 'lyrics'
+              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+              : 'text-neutral-400 hover:text-white hover:bg-neutral-900/60'
+          }`}
+        >
+          <div className="flex items-center gap-3">
+            <Mic2 className="w-4 h-4 text-emerald-400" />
+            <span>Şarkı Sözleri & Karaoke</span>
+          </div>
+          <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-300">
+            LRC
+          </span>
         </button>
 
         <button

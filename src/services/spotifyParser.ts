@@ -137,15 +137,23 @@ export async function parseSpotifyUrl(urlInput: string): Promise<SpotifyParsedRe
   let spotifyId = '';
   let type: 'playlist' | 'track' | 'album' | 'artist' | 'unknown' = 'unknown';
 
-  const match = trimmed.match(/open\.spotify\.com\/(playlist|track|album|artist)\/([a-zA-Z0-9]+)/);
+  // Support international localized URLs like /intl-tr/playlist/..., /intl-en/..., plain /playlist/..., etc.
+  const match = trimmed.match(/open\.spotify\.com\/(?:[a-zA-Z]{2}(?:-[a-zA-Z]{2})?\/)?(?:intl-[a-z]{2}\/)?(playlist|track|album|artist)\/([a-zA-Z0-9]+)/i);
   if (match) {
-    type = match[1] as any;
+    type = match[1].toLowerCase() as any;
     spotifyId = match[2];
   } else if (trimmed.startsWith('spotify:')) {
     const parts = trimmed.split(':');
     if (parts.length >= 3) {
-      type = parts[1] as any;
-      spotifyId = parts[2];
+      type = parts[1].toLowerCase() as any;
+      spotifyId = parts[2].split('?')[0];
+    }
+  } else {
+    // Check if user just pasted an ID or query
+    const simpleMatch = trimmed.match(/([a-zA-Z0-9]{22})/);
+    if (simpleMatch) {
+      spotifyId = simpleMatch[1];
+      type = 'playlist';
     }
   }
 

@@ -19,6 +19,7 @@ import { PinLockScreen } from './components/Settings/PinLockScreen';
 import { QueueDrawer } from './components/Queue/QueueDrawer';
 import { JoinRoomModal } from './components/Playlist/JoinRoomModal';
 import { InstallModal } from './components/InstallModal';
+import { LyricsView } from './components/Lyrics/LyricsView';
 import { usePWAInstall } from './hooks/usePWAInstall';
 
 import {
@@ -48,7 +49,8 @@ import {
   selectSmartThematicNextTrack,
   detectTrackTheme,
   getSmartShuffleEnabled,
-  setSmartShuffleEnabled
+  setSmartShuffleEnabled,
+  fetchThematicSongRadio
 } from './services/recommendationService';
 import { collabManager } from './services/collaboration';
 import {
@@ -285,11 +287,25 @@ export default function App() {
     }
   };
 
-  const handleNextTrack = () => {
+  const handleNextTrack = async () => {
     if (queue.length > 0) {
       const nextTrack = queue[0];
       setQueue(prev => prev.slice(1));
-      handlePlayTrack(nextTrack);
+      handlePlayTrack(nextTrack, playbackContext.tracks.length > 0 ? playbackContext.tracks : [nextTrack], playbackContext.title);
+
+      // If running low on radio queue, prefetch next batch of similar songs seamlessly
+      if (isRadioActive && queue.length <= 2 && nextTrack) {
+        fetchThematicSongRadio(nextTrack, 10, Array.from(playedTrackIds))
+          .then(res => {
+            if (res && Array.isArray(res.tracks)) {
+              const newTracks = res.tracks.filter(t => !playedTrackIds.has(t.id) && t.id !== nextTrack.id);
+              if (newTracks.length > 0) {
+                setQueue(prev => [...prev, ...newTracks]);
+              }
+            }
+          })
+          .catch(() => {});
+      }
       return;
     }
 
@@ -297,26 +313,42 @@ export default function App() {
       ? playbackContext.tracks
       : (playlists.find(p => p.id === activePlaylistId)?.tracks || []);
 
-    if (currentList.length === 0) return;
+    if (currentList.length === 0 && !currentTrack) return;
 
     if (shuffleMode === 'smart' || shuffleMode === 'random') {
       const remaining = currentList.filter(t => !playedTrackIds.has(t.id));
       const pool = remaining.length > 0 ? remaining : currentList;
       const next = pool[Math.floor(Math.random() * pool.length)];
-      handlePlayTrack(next);
-      return;
+      if (next) {
+        handlePlayTrack(next, currentList, playbackContext.title);
+        return;
+      }
     }
 
     const currentIdx = currentList.findIndex(t => t.id === currentTrack?.id);
     if (currentIdx !== -1 && currentIdx < currentList.length - 1) {
-      handlePlayTrack(currentList[currentIdx + 1]);
-    } else if (repeatMode === 'all') {
-      handlePlayTrack(currentList[0]);
-    } else if (getEndlessAutoplay() && currentTrack) {
-      const autoNext = selectSmartThematicNextTrack(currentTrack, currentList, playedTrackIds);
+      handlePlayTrack(currentList[currentIdx + 1], currentList, playbackContext.title);
+    } else if (repeatMode === 'all' && currentList.length > 0) {
+      handlePlayTrack(currentList[0], currentList, playbackContext.title);
+    } else if ((isRadioActive || getEndlessAutoplay()) && currentTrack) {
+      // Endless Radio / Autoplay mode: Find next matching song from current theme/genre
+      const allAppTracks = playlists.flatMap(p => p.tracks);
+      const autoNext = selectSmartThematicNextTrack(currentTrack, allAppTracks, playedTrackIds);
       if (autoNext) {
-        handlePlayTrack(autoNext);
-        showToast(`✨ Otomatik Devam: "${autoNext.title}" çalınıyor`);
+        handlePlayTrack(autoNext, allAppTracks, `📻 ${radioThemeName || 'Şarkı'} Radyosu`);
+        showToast(`✨ Radyo Akışı: "${autoNext.title}" - ${autoNext.artist}`);
+      } else {
+        // Fetch fresh radio recommendations on the fly
+        fetchThematicSongRadio(currentTrack, 8, Array.from(playedTrackIds))
+          .then(res => {
+            if (res && res.tracks && res.tracks.length > 0) {
+              const [first, ...rest] = res.tracks;
+              setQueue(rest);
+              handlePlayTrack(first, res.tracks, res.radioTitle);
+              showToast(`📻 Radyo Akışı: "${first.title}" - ${first.artist}`);
+            }
+          })
+          .catch(() => {});
       }
     }
   };
@@ -393,12 +425,27 @@ export default function App() {
     audioEngine.setVolume(willMute ? 0 : audioSettings.volume);
   };
 
-  const handleStartSongRadio = (track: Track) => {
+  const handleStartSongRadio = async (track: Track) => {
     const theme = detectTrackTheme(track);
     setIsRadioActive(true);
     setRadioThemeName(theme.displayName);
-    handlePlayTrack(track);
-    showToast(`📻 "${track.title}" Sanatçı & Tür Radyosu Başlatıldı`);
+    handlePlayTrack(track, [track], `📻 ${track.artist || track.title} Radyosu`);
+    showToast(`📻 "${track.title}" Radyosu Başlatıldı...`);
+
+    try {
+      const res = await fetchThematicSongRadio(track, 15);
+      if (res && Array.isArray(res.tracks) && res.tracks.length > 0) {
+        setQueue(res.tracks);
+        setPlaybackContext({
+          type: 'radio',
+          title: res.radioTitle,
+          tracks: [track, ...res.tracks]
+        });
+        showToast(`✨ ${res.tracks.length} benzer şarkı sıraya eklendi (${res.themeName})`);
+      }
+    } catch (err) {
+      console.warn('Radio queue init note:', err);
+    }
   };
 
   const handleSetSleepTimer = (minutes: number | null) => {
@@ -501,7 +548,11 @@ export default function App() {
       setPlaylists(prev => [newPlaylist, ...prev]);
       setActivePlaylistId(newId);
       setActiveView('playlist');
-      if (tracks.length > 0) handlePlayTrack(tracks[0]);
+      if (tracks.length > 0) {
+        handlePlayTrack(tracks[0], tracks, newPlaylist.name);
+        setQueue(tracks.slice(1));
+        showToast(`🎶 "${newPlaylist.name}" (${tracks.length} şarkı) çalınmaya başlandı!`);
+      }
       return;
     }
 
@@ -837,6 +888,21 @@ export default function App() {
               </div>
             )}
           </div>
+        )}
+
+        {activeView === 'lyrics' && (
+          <LyricsView
+            currentTrack={currentTrack}
+            isPlaying={isPlaying}
+            currentTime={currentTime}
+            duration={duration}
+            onTogglePlay={handleTogglePlay}
+            onPrev={handlePrevTrack}
+            onNext={handleNextTrack}
+            onSeek={handleSeek}
+            onStartSongRadio={handleStartSongRadio}
+            onPlayTrack={handlePlayTrack}
+          />
         )}
       </main>
 

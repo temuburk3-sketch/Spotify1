@@ -1,8 +1,9 @@
 import React, { useState, useMemo, memo, useEffect, useRef } from 'react';
 import { motion } from 'motion/react';
-import { Play, Pause, Shuffle, DownloadCloud, HardDrive, Share2, Users, Palette, Plus, Search, Trash2, ArrowUp, ArrowDown, Music, ThumbsUp, MoreHorizontal, Sparkles, CheckCircle2, Link as LinkIcon, Radio, Clock, LayoutList, ListFilter, Zap } from 'lucide-react';
+import { Play, Pause, Shuffle, DownloadCloud, HardDrive, Share2, Users, Palette, Plus, Search, Trash2, ArrowUp, ArrowDown, Music, ThumbsUp, MoreHorizontal, Sparkles, CheckCircle2, Link as LinkIcon, Radio, Clock, LayoutList, ListFilter, Zap, Heart } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Playlist, Track } from '../../types';
+import { isTrackFollowed, toggleFollowTrack, subscribeToFollowChanges } from '../../services/followService';
 
 interface PlaylistDetailProps {
   playlist: Playlist;
@@ -51,8 +52,17 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = memo(({
   const [isDownloadingAll, setIsDownloadingAll] = useState(false);
   const [isCompactView, setIsCompactView] = useState(false);
   const [visibleCount, setVisibleCount] = useState(80);
+  const [followUpdateTick, setFollowUpdateTick] = useState(0);
 
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Subscribe to follow changes to re-render hearts
+  useEffect(() => {
+    const unsubscribe = subscribeToFollowChanges(() => {
+      setFollowUpdateTick(prev => prev + 1);
+    });
+    return unsubscribe;
+  }, []);
 
   // Reset visible limit on playlist change or search
   useEffect(() => {
@@ -475,6 +485,25 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = memo(({
 
                   {/* Actions & Duration */}
                   <div className="col-span-3 md:col-span-2 flex items-center justify-end gap-1.5 text-xs text-neutral-400">
+                    {/* Follow Song Button (Heart) */}
+                    {(() => {
+                      const isFollowed = isTrackFollowed(track.id) || isTrackFollowed(track.title);
+                      return (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleFollowTrack(track);
+                          }}
+                          className={`p-1.5 rounded-lg hover:bg-neutral-800 transition cursor-pointer ${
+                            isFollowed ? 'text-rose-500 opacity-100' : 'text-neutral-500 hover:text-rose-400 opacity-0 group-hover:opacity-100'
+                          }`}
+                          title={isFollowed ? 'Şarkıyı Takipten Çıkar' : 'Şarkıyı Takip Et (Favorilere Ekle)'}
+                        >
+                          <Heart className={`w-3.5 h-3.5 ${isFollowed ? 'fill-rose-500 text-rose-500' : ''}`} />
+                        </button>
+                      );
+                    })()}
+
                     {/* Reorder buttons */}
                     {sortBy === 'custom' && (
                       <div className="hidden sm:flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition">

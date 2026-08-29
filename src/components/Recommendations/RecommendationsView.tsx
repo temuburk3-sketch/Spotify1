@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, memo } from 'react';
 import { motion } from 'motion/react';
-import { Sparkles, Play, Pause, Plus, HardDrive, RefreshCw, Music, Disc, Flame, Coffee, Compass, Radio, Check, Volume2, ShieldCheck, ListPlus, TrendingUp, Clock, BarChart3, HelpCircle } from 'lucide-react';
+import { Sparkles, Play, Pause, Plus, HardDrive, RefreshCw, Music, Disc, Flame, Coffee, Compass, Radio, Check, Volume2, ShieldCheck, ListPlus, TrendingUp, Clock, BarChart3, HelpCircle, Heart } from 'lucide-react';
 import { Track, Playlist, ListeningHabitsSummary } from '../../types';
 import { fetchSmartRecommendations, getListeningHabitsSummary, getEndlessAutoplay, setEndlessAutoplay } from '../../services/recommendationService';
+import { isTrackFollowed, toggleFollowTrack, subscribeToFollowChanges } from '../../services/followService';
 import confetti from 'canvas-confetti';
 
 interface RecommendationsViewProps {
@@ -47,6 +48,14 @@ export const RecommendationsView: React.FC<RecommendationsViewProps> = memo(({
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string>(playlists[0]?.id || '');
   const [addedTrackIds, setAddedTrackIds] = useState<Set<string>>(new Set());
   const [isAddingAll, setIsAddingAll] = useState(false);
+  const [followTick, setFollowTick] = useState(0);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToFollowChanges(() => {
+      setFollowTick(prev => prev + 1);
+    });
+    return unsubscribe;
+  }, []);
 
   const loadRecs = useCallback(async (mood: string) => {
     setIsLoading(true);
@@ -345,6 +354,27 @@ export const RecommendationsView: React.FC<RecommendationsViewProps> = memo(({
                     </span>
 
                     <div className="flex items-center gap-1.5">
+                      {/* Follow Song Heart Button */}
+                      {(() => {
+                        const isFollowed = isTrackFollowed(track.id) || isTrackFollowed(track.title);
+                        return (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleFollowTrack(track);
+                            }}
+                            className={`p-1.5 rounded-lg border transition cursor-pointer ${
+                              isFollowed
+                                ? 'bg-rose-500/20 border-rose-500/40 text-rose-400'
+                                : 'bg-neutral-900 hover:bg-neutral-800 border-neutral-700/60 text-neutral-400 hover:text-rose-400'
+                            }`}
+                            title={isFollowed ? 'Şarkıyı Takipten Çıkar' : 'Şarkıyı Takip Et'}
+                          >
+                            <Heart className={`w-3.5 h-3.5 ${isFollowed ? 'fill-rose-500 text-rose-500' : ''}`} />
+                          </button>
+                        );
+                      })()}
+
                       {onStartSongRadio && (
                         <button
                           onClick={() => onStartSongRadio(track)}

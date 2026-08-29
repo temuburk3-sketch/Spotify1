@@ -34,7 +34,30 @@ export const SpotifyImportModal: React.FC<SpotifyImportModalProps> = ({
   const [searchFilter, setSearchFilter] = useState('');
   const [maxTrackLimit, setMaxTrackLimit] = useState<number>(1000);
 
-  if (!isOpen) return null;
+  const finalTracksToImport = useMemo(() => {
+    if (!parsedData) return [];
+    return createTracksFromSpotifyImport(parsedData, {
+      deduplicate,
+      maxTracks: maxTrackLimit
+    });
+  }, [parsedData, deduplicate, maxTrackLimit]);
+
+  const filteredPreviewTracks = useMemo(() => {
+    if (!finalTracksToImport) return [];
+    if (!searchFilter.trim()) return finalTracksToImport;
+    const q = searchFilter.toLowerCase();
+    return finalTracksToImport.filter(
+      t => t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q)
+    );
+  }, [finalTracksToImport, searchFilter]);
+
+  const totalCalculatedDuration = useMemo(() => {
+    const totalSecs = finalTracksToImport.reduce((acc, t) => acc + (t.duration || 0), 0);
+    const hours = Math.floor(totalSecs / 3600);
+    const mins = Math.floor((totalSecs % 3600) / 60);
+    if (hours > 0) return `${hours} saat ${mins} dakika`;
+    return `${mins} dakika`;
+  }, [finalTracksToImport]);
 
   const handleParse = async () => {
     if (!spotifyUrl.trim()) return;
@@ -62,31 +85,6 @@ export const SpotifyImportModal: React.FC<SpotifyImportModalProps> = ({
     }
   };
 
-  const finalTracksToImport = useMemo(() => {
-    if (!parsedData) return [];
-    return createTracksFromSpotifyImport(parsedData, {
-      deduplicate,
-      maxTracks: maxTrackLimit
-    });
-  }, [parsedData, deduplicate, maxTrackLimit]);
-
-  const filteredPreviewTracks = useMemo(() => {
-    if (!finalTracksToImport) return [];
-    if (!searchFilter.trim()) return finalTracksToImport;
-    const q = searchFilter.toLowerCase();
-    return finalTracksToImport.filter(
-      t => t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q)
-    );
-  }, [finalTracksToImport, searchFilter]);
-
-  const totalCalculatedDuration = useMemo(() => {
-    const totalSecs = finalTracksToImport.reduce((acc, t) => acc + (t.duration || 0), 0);
-    const hours = Math.floor(totalSecs / 3600);
-    const mins = Math.floor((totalSecs % 3600) / 60);
-    if (hours > 0) return `${hours} saat ${mins} dakika`;
-    return `${mins} dakika`;
-  }, [finalTracksToImport]);
-
   const handleImport = () => {
     if (finalTracksToImport.length === 0) return;
     
@@ -109,6 +107,8 @@ export const SpotifyImportModal: React.FC<SpotifyImportModalProps> = ({
       setPreviewTrackId(track.id);
     }
   };
+
+  if (!isOpen) return null;
 
   return (
     <AnimatePresence>

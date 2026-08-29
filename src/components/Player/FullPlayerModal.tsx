@@ -18,12 +18,24 @@ import {
   Loader2,
   Volume2,
   Disc3,
-  Compass
+  Compass,
+  Heart,
+  UserCheck,
+  UserPlus,
+  Share2,
+  Flame
 } from 'lucide-react';
 import { Track, RepeatMode, ShuffleMode } from '../../types';
 import { AudioVisualizer } from './AudioVisualizer';
 import { detectTrackTheme } from '../../services/recommendationService';
 import { fetchLyricsForTrack, LyricsResponse } from '../../services/lyricsService';
+import {
+  isTrackFollowed,
+  toggleFollowTrack,
+  isArtistFollowed,
+  toggleFollowArtist,
+  subscribeToFollowChanges
+} from '../../services/followService';
 
 interface FullPlayerModalProps {
   isOpen: boolean;
@@ -74,9 +86,43 @@ export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
   const [isLoadingLyrics, setIsLoadingLyrics] = useState<boolean>(false);
   const [isImmersiveLyrics, setIsImmersiveLyrics] = useState<boolean>(false);
   const [autoFollow, setAutoFollow] = useState<boolean>(true);
+  const [isFollowed, setIsFollowed] = useState<boolean>(false);
+  const [isFollowedArtist, setIsFollowedArtist] = useState<boolean>(false);
+  const [showFollowToast, setShowFollowToast] = useState<string | null>(null);
+
   const lyricsContainerRef = useRef<HTMLDivElement | null>(null);
   const activeLyricRef = useRef<HTMLDivElement | null>(null);
   const userScrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Sync follow status
+  useEffect(() => {
+    if (!track) return;
+    setIsFollowed(isTrackFollowed(track.id) || isTrackFollowed(track.title));
+    setIsFollowedArtist(isArtistFollowed(track.artist));
+
+    const unsubscribe = subscribeToFollowChanges(() => {
+      setIsFollowed(isTrackFollowed(track.id) || isTrackFollowed(track.title));
+      setIsFollowedArtist(isArtistFollowed(track.artist));
+    });
+
+    return unsubscribe;
+  }, [track?.id, track?.title, track?.artist]);
+
+  const handleToggleFollow = () => {
+    if (!track) return;
+    const nowFollowed = toggleFollowTrack(track);
+    setIsFollowed(nowFollowed);
+    setShowFollowToast(nowFollowed ? 'Şarkı Takip Edilenlere Eklendi 💖' : 'Takip Kaldırıldı');
+    setTimeout(() => setShowFollowToast(null), 2500);
+  };
+
+  const handleToggleFollowArtist = () => {
+    if (!track || !track.artist) return;
+    const nowFollowed = toggleFollowArtist(track.artist);
+    setIsFollowedArtist(nowFollowed);
+    setShowFollowToast(nowFollowed ? `${track.artist} Takip Ediliyor ⭐` : `${track.artist} Takipten Çıkarıldı`);
+    setTimeout(() => setShowFollowToast(null), 2500);
+  };
 
   // Fetch real lyrics on track load
   useEffect(() => {
@@ -111,16 +157,21 @@ export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
     return prevIdx;
   }, 0);
 
-  // Auto-scroll to active lyric line
+  // Auto-scroll to active lyric line with exact vertical center locking
   useEffect(() => {
     if (!autoFollow || !lyricsContainerRef.current) return;
 
     const activeEl = lyricsContainerRef.current.querySelector<HTMLElement>(`[data-lyric-idx="${currentLyricIndex}"]`);
     if (activeEl) {
       const container = lyricsContainerRef.current;
-      const topOffset = activeEl.offsetTop - container.offsetTop - container.clientHeight / 2 + activeEl.clientHeight / 2;
+      // Calculate target scroll so active line sits precisely in container vertical center
+      const containerRect = container.getBoundingClientRect();
+      const activeRect = activeEl.getBoundingClientRect();
+      const relativeTop = activeRect.top - containerRect.top + container.scrollTop;
+      const targetScroll = relativeTop - (container.clientHeight / 2) + (activeEl.clientHeight / 2);
+
       container.scrollTo({
-        top: Math.max(0, topOffset),
+        top: Math.max(0, targetScroll),
         behavior: 'smooth'
       });
     }
@@ -203,69 +254,116 @@ export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
         </div>
 
         {/* Center Main Body */}
-        <div className="relative z-10 flex-1 flex flex-col md:flex-row items-center justify-center p-6 md:p-10 gap-8 max-w-6xl mx-auto w-full min-h-0 overflow-hidden">
+        <div className="relative z-10 flex-1 flex flex-col md:flex-row items-center justify-center px-4 sm:px-6 md:px-10 py-4 md:py-6 gap-6 md:gap-8 max-w-6xl mx-auto w-full min-h-0 overflow-y-auto md:overflow-hidden">
           {/* Cover & Audio Details (Hidden in pure immersive lyrics view on small screens) */}
           {!isImmersiveLyrics && (
-            <div className="flex flex-col items-center max-w-sm w-full shrink-0">
-              <div className="relative w-64 h-64 md:w-80 md:h-80 rounded-2xl overflow-hidden shadow-2xl border border-white/10 group">
+            <div className="flex flex-col items-center max-w-xs sm:max-w-sm w-full shrink-0">
+              <div className="relative w-48 h-48 sm:w-56 sm:h-56 md:w-72 md:h-72 rounded-2xl overflow-hidden shadow-2xl border border-white/10 group bg-neutral-950">
                 <img
                   src={track.coverUrl}
                   alt={track.title}
                   className="w-full h-full object-cover transition duration-700 group-hover:scale-105"
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent flex flex-col justify-end p-5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-mono font-bold text-emerald-400">
-                      {track.album || track.genre || 'SoundPulse Master Audio'}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent flex flex-col justify-end p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-mono font-bold text-emerald-400 truncate">
+                      {track.album || track.genre || 'SoundPulse Audio'}
                     </span>
+                    <button
+                      onClick={handleToggleFollow}
+                      className={`p-2 rounded-full backdrop-blur-md transition ${
+                        isFollowed
+                          ? 'bg-rose-500/30 text-rose-400 border border-rose-500/50'
+                          : 'bg-black/50 text-white/70 hover:text-white border border-white/20'
+                      }`}
+                      title={isFollowed ? 'Şarkıyı Takipten Çıkar' : 'Şarkıyı Takip Et'}
+                    >
+                      <Heart className={`w-4 h-4 ${isFollowed ? 'fill-rose-500 text-rose-500' : ''}`} />
+                    </button>
                   </div>
                 </div>
               </div>
 
               {/* Real-time Frequency Visualizer */}
-              <div className="w-full mt-4 px-2">
-                <AudioVisualizer isPlaying={isPlaying} color="#10b981" type="bars" className="w-full h-10" />
+              <div className="w-full mt-3 px-2">
+                <AudioVisualizer isPlaying={isPlaying} color="#10b981" type="bars" className="w-full h-8 sm:h-10" />
               </div>
             </div>
           )}
 
           {/* Synchronized Lyrics & Follow-Along Panel */}
           <div className="flex-1 w-full flex flex-col h-full min-h-0 justify-between">
-            {/* Header info */}
-            <div className="mb-3 shrink-0 flex items-start justify-between gap-4">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h1 className="text-xl md:text-3xl font-extrabold text-white tracking-tight truncate">
+            {/* Header info & Follow Buttons */}
+            <div className="mb-3 shrink-0 flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                {/* Title & Follow Song Button */}
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <h1 className="text-xl sm:text-2xl md:text-3xl font-black text-white tracking-tight truncate">
                     {track.title}
                   </h1>
+
+                  {/* Song Follow Button */}
+                  <button
+                    onClick={handleToggleFollow}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer border ${
+                      isFollowed
+                        ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 shadow-sm'
+                        : 'bg-neutral-900 text-neutral-300 border-neutral-700 hover:text-white hover:border-neutral-500'
+                    }`}
+                    title={isFollowed ? 'Şarkıyı Takipten Çıkar' : 'Şarkıyı Takip Et (Favorilere Ekle)'}
+                  >
+                    <Heart className={`w-3.5 h-3.5 ${isFollowed ? 'fill-rose-500 text-rose-500' : ''}`} />
+                    <span>{isFollowed ? 'Takip Ediliyor' : 'Şarkıyı Takip Et'}</span>
+                  </button>
+
                   {isRadioActive && (
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
                       <Radio className="w-3 h-3" /> Radyo
                     </span>
                   )}
                 </div>
-                <p className="text-sm md:text-base font-semibold text-emerald-400 mt-0.5 truncate">{track.artist}</p>
 
-                {currentTheme && (
-                  <div className="mt-2 flex items-center gap-2 flex-wrap">
-                    <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${currentTheme.color}`}>
+                {/* Artist & Follow Artist Button */}
+                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                  <p className="text-sm md:text-base font-semibold text-emerald-400 truncate">{track.artist}</p>
+                  
+                  {track.artist && (
+                    <button
+                      onClick={handleToggleFollowArtist}
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold transition border cursor-pointer ${
+                        isFollowedArtist
+                          ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40'
+                          : 'bg-neutral-900/80 text-neutral-400 border-neutral-800 hover:text-neutral-200'
+                      }`}
+                      title={isFollowedArtist ? 'Sanatçıyı Takipten Çıkar' : 'Sanatçıyı Takip Et'}
+                    >
+                      {isFollowedArtist ? <UserCheck className="w-3 h-3 text-indigo-400" /> : <UserPlus className="w-3 h-3" />}
+                      <span>{isFollowedArtist ? 'Sanatçı Takipte' : 'Sanatçıyı Takip Et'}</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Theme badges & Radio shortcut */}
+                <div className="mt-2 flex items-center gap-2 flex-wrap">
+                  {currentTheme && (
+                    <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${currentTheme.color}`}>
                       {currentTheme.displayName}
                     </span>
-                    {onStartSongRadio && (
-                      <button
-                        onClick={() => onStartSongRadio(track)}
-                        className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-neutral-900 border border-neutral-700 hover:border-amber-400/60 text-amber-300 transition cursor-pointer"
-                        title="Bu tarzda sonsuz şarkı akışı başlat"
-                      >
-                        <Radio className="w-3 h-3" /> Şarkı Radyosu
-                      </button>
-                    )}
-                  </div>
-                )}
+                  )}
+                  {onStartSongRadio && (
+                    <button
+                      onClick={() => onStartSongRadio(track)}
+                      className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-neutral-900 border border-neutral-700 hover:border-amber-400/60 text-amber-300 transition cursor-pointer"
+                      title="Bu tarzda sonsuz şarkı akışı başlat"
+                    >
+                      <Radio className="w-3 h-3" /> Şarkı Radyosu
+                    </button>
+                  )}
+                </div>
               </div>
 
-              {/* Status / Follow-Along toggle */}
-              <div className="flex items-center gap-2 shrink-0">
+              {/* Status / Lyrics Follow-Along toggle */}
+              <div className="flex items-center gap-2 shrink-0 self-start sm:self-auto">
                 <button
                   onClick={() => setAutoFollow(!autoFollow)}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition cursor-pointer border ${
@@ -276,7 +374,7 @@ export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
                   title="Şarkı çalarken sözleri otomatik takip et"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
-                  <span>{autoFollow ? 'Takip Açık' : 'Takip Kapalı'}</span>
+                  <span>{autoFollow ? 'Söz Takibi Açık' : 'Söz Takibi Kapalı'}</span>
                 </button>
               </div>
             </div>
@@ -285,8 +383,8 @@ export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
             <div
               ref={lyricsContainerRef}
               onScroll={handleUserScroll}
-              className={`flex-1 bg-black/40 rounded-2xl p-6 border border-white/10 overflow-y-auto space-y-4 relative scroll-smooth transition-all ${
-                isImmersiveLyrics ? 'max-h-[60vh] md:max-h-[68vh]' : 'max-h-[42vh] md:max-h-[48vh]'
+              className={`flex-1 bg-black/40 rounded-2xl p-4 sm:p-6 border border-white/10 overflow-y-auto space-y-4 relative scroll-smooth transition-all ${
+                isImmersiveLyrics ? 'max-h-[60vh] md:max-h-[68vh]' : 'max-h-[36vh] sm:max-h-[42vh] md:max-h-[48vh]'
               }`}
             >
               {/* Lyrics metadata bar */}
@@ -306,24 +404,39 @@ export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
                 ) : null}
               </div>
 
-              {/* Timed Lyrics Lines */}
-              <div className="py-8 space-y-5">
+              {/* Timed Lyrics Lines with center padding and dynamic focus */}
+              <div className="py-[32vh] space-y-4 sm:space-y-5">
                 {timedLyrics.map((line, idx) => {
                   const isActive = idx === currentLyricIndex;
-                  const isPast = idx < currentLyricIndex;
+                  const distance = Math.abs(idx - currentLyricIndex);
+
+                  let opacityClass = 'opacity-85 text-neutral-300';
+                  let scaleClass = 'scale-95';
+
+                  if (isActive) {
+                    opacityClass = 'opacity-100 text-white';
+                    scaleClass = 'scale-105 sm:scale-108';
+                  } else if (distance === 1) {
+                    opacityClass = 'opacity-65 text-neutral-400';
+                    scaleClass = 'scale-98';
+                  } else if (distance === 2) {
+                    opacityClass = 'opacity-40 text-neutral-500';
+                    scaleClass = 'scale-95';
+                  } else {
+                    opacityClass = 'opacity-20 text-neutral-600';
+                    scaleClass = 'scale-90';
+                  }
 
                   return (
                     <div
                       key={idx}
                       data-lyric-idx={idx}
                       onClick={() => onSeek(line.time)}
-                      className={`group flex items-start gap-3 cursor-pointer transition-all duration-300 rounded-xl p-3 ${
+                      className={`group flex items-start gap-3 cursor-pointer transition-all duration-500 ease-out rounded-2xl p-3 sm:p-4 origin-left ${scaleClass} ${
                         isActive
-                          ? 'text-white font-extrabold text-lg md:text-2xl scale-102 bg-white/10 pl-4 border-l-4 border-emerald-400 shadow-lg shadow-emerald-500/10'
-                          : isPast
-                          ? 'text-neutral-500 font-semibold text-sm md:text-base hover:text-neutral-300 opacity-60'
-                          : 'text-neutral-400 font-semibold text-sm md:text-base hover:text-white opacity-80'
-                      }`}
+                          ? 'font-black text-lg sm:text-xl md:text-2xl bg-gradient-to-r from-emerald-500/20 via-white/10 to-transparent pl-5 sm:pl-6 border-l-4 border-emerald-400 shadow-2xl shadow-emerald-500/20'
+                          : 'font-medium text-xs sm:text-sm md:text-base hover:opacity-90 hover:text-neutral-200'
+                      } ${opacityClass}`}
                     >
                       <span className="text-[10px] font-mono text-neutral-500 opacity-0 group-hover:opacity-100 transition mt-1 shrink-0">
                         {formatTime(line.time)}
@@ -348,6 +461,21 @@ export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Follow Toast */}
+        <AnimatePresence>
+          {showFollowToast && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              className="fixed bottom-28 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full bg-neutral-900/95 text-white border border-neutral-700 shadow-2xl text-xs font-bold flex items-center gap-2 backdrop-blur-md"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+              <span>{showFollowToast}</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Bottom Playback Controls */}
         <div
