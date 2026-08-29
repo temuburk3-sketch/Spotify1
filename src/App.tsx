@@ -37,6 +37,8 @@ import {
   loadPlaylistsFromDB,
   saveFoldersToDB,
   loadFoldersFromDB,
+  getInitialPlaylistsSync,
+  getInitialFoldersSync,
   cacheTrackAudio,
   clearOfflineCacheAndResetPlaylists,
   getCachedAudioStats,
@@ -70,11 +72,21 @@ import {
 import confetti from 'canvas-confetti';
 
 export default function App() {
-  // Playlists, Folders & Navigation
-  const [playlists, setPlaylists] = useState<Playlist[]>(DEFAULT_PLAYLISTS);
-  const [folders, setFolders] = useState<PlaylistFolder[]>(DEFAULT_FOLDERS);
+  // Playlists, Folders & Navigation (Synchronous cache first for 0-flicker instant restore)
+  const [isHydrated, setIsHydrated] = useState<boolean>(false);
+  const [playlists, setPlaylists] = useState<Playlist[]>(() => {
+    const sync = getInitialPlaylistsSync();
+    return sync && sync.length > 0 ? sync : DEFAULT_PLAYLISTS;
+  });
+  const [folders, setFolders] = useState<PlaylistFolder[]>(() => {
+    const sync = getInitialFoldersSync();
+    return sync && sync.length > 0 ? sync : DEFAULT_FOLDERS;
+  });
   const [activeFolderId, setActiveFolderId] = useState<string>('all');
-  const [activePlaylistId, setActivePlaylistId] = useState<string>(DEFAULT_PLAYLISTS[0].id);
+  const [activePlaylistId, setActivePlaylistId] = useState<string>(() => {
+    const sync = getInitialPlaylistsSync();
+    return sync && sync.length > 0 ? sync[0].id : DEFAULT_PLAYLISTS[0].id;
+  });
   const [activeView, setActiveView] = useState<'playlist' | 'search' | 'recommendations' | 'queue' | 'lyrics'>('playlist');
 
   // Lock State
@@ -150,44 +162,61 @@ export default function App() {
     setTimeout(() => setToastMsg(null), 3200);
   };
 
-  // Load playlists & folders on initial mount
+  // Load playlists & folders on initial mount with double-layer check
   useEffect(() => {
+    let isMounted = true;
     const initData = async () => {
-      const storedFolders = await loadFoldersFromDB();
-      if (storedFolders && storedFolders.length > 0) {
-        setFolders(storedFolders);
-      }
+      try {
+        const [storedFolders, storedPlaylists, stats] = await Promise.all([
+          loadFoldersFromDB(),
+          loadPlaylistsFromDB(),
+          getCachedAudioStats()
+        ]);
 
-      const stored = await loadPlaylistsFromDB();
-      if (stored && stored.length > 0) {
-        setPlaylists(stored);
-        if (stored.some(p => p.id === activePlaylistId)) {
-          // activePlaylistId is valid
-        } else {
-          setActivePlaylistId(stored[0].id);
+        if (!isMounted) return;
+
+        if (storedFolders && storedFolders.length > 0) {
+          setFolders(storedFolders);
+        }
+
+        if (storedPlaylists && storedPlaylists.length > 0) {
+          setPlaylists(storedPlaylists);
+          setActivePlaylistId(prev => {
+            if (storedPlaylists.some(p => p.id === prev)) {
+              return prev;
+            }
+            return storedPlaylists[0].id;
+          });
+        }
+
+        setDownloadedCount(stats.count);
+      } catch (err) {
+        console.error('Initialization data error:', err);
+      } finally {
+        if (isMounted) {
+          setIsHydrated(true);
         }
       }
-
-      // Check stats
-      const stats = await getCachedAudioStats();
-      setDownloadedCount(stats.count);
     };
     initData();
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
-  // Sync playlists changes to DB
+  // Sync playlists changes to DB (only after initial load is confirmed or on explicit updates)
   useEffect(() => {
-    if (playlists.length > 0) {
+    if (isHydrated && playlists.length > 0) {
       savePlaylistsToDB(playlists);
     }
-  }, [playlists]);
+  }, [playlists, isHydrated]);
 
   // Sync folders changes to DB
   useEffect(() => {
-    if (folders.length > 0) {
+    if (isHydrated && folders.length > 0) {
       saveFoldersToDB(folders);
     }
-  }, [folders]);
+  }, [folders, isHydrated]);
 
   // Listen to collaboration events
   useEffect(() => {

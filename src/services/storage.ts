@@ -41,6 +41,15 @@ function openDB(): Promise<IDBDatabase> {
 }
 
 export async function savePlaylistsToDB(playlists: Playlist[]): Promise<void> {
+  if (!playlists || playlists.length === 0) return;
+
+  // Always synchronously update localStorage for immediate recovery and tab safety
+  try {
+    localStorage.setItem('soundpulse_playlists', JSON.stringify(playlists));
+  } catch (e) {
+    console.warn('localStorage quota warning for playlists', e);
+  }
+
   try {
     const db = await openDB();
     const tx = db.transaction(STORE_PLAYLISTS, 'readwrite');
@@ -57,10 +66,33 @@ export async function savePlaylistsToDB(playlists: Playlist[]): Promise<void> {
     }
   } catch (err) {
     console.error('Failed to save playlists to IndexedDB:', err);
-    try {
-      localStorage.setItem('soundpulse_playlists', JSON.stringify(playlists));
-    } catch {}
   }
+}
+
+export function getInitialPlaylistsSync(): Playlist[] | null {
+  try {
+    const local = localStorage.getItem('soundpulse_playlists');
+    if (local) {
+      const parsed = JSON.parse(local);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+export function getInitialFoldersSync(): PlaylistFolder[] | null {
+  try {
+    const local = localStorage.getItem('soundpulse_folders');
+    if (local) {
+      const parsed = JSON.parse(local);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch {}
+  return null;
 }
 
 export async function loadPlaylistsFromDB(): Promise<Playlist[] | null> {
