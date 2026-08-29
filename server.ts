@@ -1666,7 +1666,7 @@ function sanitizeTitleAndArtist(rawTitle: string, rawArtist: string) {
 
   // Remove common title junk: (feat. ...), [feat. ...], (Remastered 2020), - Live, - Single, (Official Video)
   title = title
-    .replace(/\s*[\(\[](?:feat\.|ft\.|with|official|lyric|video|audio|remastered|remaster|live|akustik|acoustic|deluxe|bonus|edit|radio edit).*?[\)\]]/gi, "")
+    .replace(/\s*[\(\[](?:feat\.|ft\.|with|official|lyric|lyrics|video|audio|remastered|remaster|live|akustik|acoustic|deluxe|bonus|edit|radio edit|hd|4k).*?[\)\]]/gi, "")
     .replace(/\s*-\s*(?:Single|Live|Remastered|Remaster|Acoustic|Bonus Track|Original Mix|Edit|Radio Edit|Instrumental).*$/i, "")
     .replace(/\s+/g, " ")
     .trim();
@@ -1679,9 +1679,141 @@ function sanitizeTitleAndArtist(rawTitle: string, rawArtist: string) {
   return { title, artist };
 }
 
-// Synchronized Lyrics API (Multi-tier LRCLIB + Gemini AI Synced Engine)
-app.get("/api/lyrics", async (req, res) => {
-  const { title, artist, duration } = req.query;
+// Resilient Gemini Web Search-grounded lyrics finder & synchronizer
+async function fetchLyricsWithGeminiSearch(
+  cleanTitle: string,
+  cleanArtist: string,
+  songDuration: number
+): Promise<{
+  synced: boolean;
+  timedLyrics: { time: number; text: string }[];
+  plainLyrics: string;
+  source: string;
+  webSources?: string[];
+} | null> {
+  const ai = getGenAI();
+  if (!ai) return null;
+
+  const durationSec = Math.max(30, Math.round(songDuration));
+
+  // Method 1: Gemini 3.7 Flash with Google Search Grounding to find real lyrics on the live web
+  try {
+    const searchPrompt = `Search the web for the official, authentic lyrics of the song "${cleanTitle}" by "${cleanArtist}".
+Find the exact real lyrics from lyric archives and databases (e.g. Genius, SarkiSozleri, Musixmatch, AzLyrics, LyricsTranslate).
+Then produce a synchronized version with timestamps distributed naturally across the song duration (~${durationSec} seconds), beginning with the vocal entry (~6-12s) until the outro.
+
+Output your response STRICTLY as a raw JSON object with NO preamble and NO commentary:
+{
+  "plainLyrics": "Complete official lyrics with verses and chorus separated by clean newlines",
+  "timedLyrics": [
+    { "time": 8, "text": "First line of verse" },
+    { "time": 14, "text": "Second line..." }
+  ],
+  "isInstrumental": false,
+  "foundOnline": true
+}`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.7-flash",
+      contents: searchPrompt,
+      config: {
+        tools: [{ googleSearch: {} }],
+      }
+    });
+
+    if (response && response.text) {
+      let rawText = response.text.trim();
+      // Remove markdown code fences if present
+      if (rawText.startsWith("```")) {
+        rawText = rawText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+      }
+
+      const parsed = JSON.parse(rawText);
+      if (parsed && Array.isArray(parsed.timedLyrics) && parsed.timedLyrics.length > 0) {
+        // Extract web grounding sources if available
+        const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+        const webSources: string[] = [];
+        if (groundingChunks && Array.isArray(groundingChunks)) {
+          for (const chunk of groundingChunks) {
+            if (chunk.web?.title) webSources.push(chunk.web.title);
+          }
+        }
+
+        return {
+          synced: true,
+          timedLyrics: parsed.timedLyrics.sort((a: any, b: any) => Number(a.time) - Number(b.time)),
+          plainLyrics: parsed.plainLyrics || parsed.timedLyrics.map((t: any) => t.text).join("\n"),
+          source: "gemini_search_grounded",
+          webSources: webSources.slice(0, 3)
+        };
+      }
+    }
+  } catch (searchErr) {
+    console.warn("[AI Studio] Gemini search grounding lyrics notice:", searchErr);
+  }
+
+  // Method 2: Schema-enforced Gemini generation with cascade models
+  try {
+    const prompt = `You are the world's most comprehensive and accurate song lyrics encyclopedia.
+Provide the 100% REAL, AUTHENTIC, and COMPLETE official lyrics for the song:
+Title: "${cleanTitle}"
+Artist: "${cleanArtist || 'Unknown'}"
+Song Duration: ~${durationSec} seconds.
+
+Requirements:
+1. Provide the complete and accurate official lyrics in their original language (Turkish, English, etc.).
+2. In "timedLyrics", divide the entire song into line-by-line synchronized entries with realistic time stamps (in seconds) matching the vocal progression from intro (~8s) to outro (~${durationSec - 10}s).
+3. In "plainLyrics", format the full lyrics with stanzas/verses and chorus separated by clean newlines.
+4. If it is an instrumental piece, set timedLyrics to [] and plainLyrics to "[Enstrümantal Eser]".
+
+Respond in valid JSON matching schema.`;
+
+    const lyricsSchema = {
+      type: Type.OBJECT,
+      properties: {
+        timedLyrics: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              time: { type: Type.NUMBER },
+              text: { type: Type.STRING }
+            },
+            required: ["time", "text"]
+          }
+        },
+        plainLyrics: { type: Type.STRING }
+      },
+      required: ["timedLyrics", "plainLyrics"]
+    };
+
+    const aiLyrics = await generateJsonWithGemini<{ timedLyrics: { time: number; text: string }[]; plainLyrics: string }>(
+      prompt,
+      lyricsSchema,
+      ["gemini-3.7-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"]
+    );
+
+    if (aiLyrics && Array.isArray(aiLyrics.timedLyrics) && aiLyrics.timedLyrics.length > 0) {
+      return {
+        synced: true,
+        timedLyrics: aiLyrics.timedLyrics.sort((a, b) => a.time - b.time),
+        plainLyrics: aiLyrics.plainLyrics || aiLyrics.timedLyrics.map(t => t.text).join("\n"),
+        source: "gemini_synced"
+      };
+    }
+  } catch (err) {
+    console.warn("[AI Studio] Gemini fallback lyrics notice:", err);
+  }
+
+  return null;
+}
+
+// Explicit Gemini AI Web-Search Lyrics Endpoint
+app.all(["/api/gemini/lyrics", "/api/gemini-lyrics"], async (req, res) => {
+  const title = (req.query.title as string) || (req.body?.title as string);
+  const artist = (req.query.artist as string) || (req.body?.artist as string);
+  const duration = (req.query.duration as string) || (req.body?.duration as string);
+
   if (!title || typeof title !== "string") {
     return res.status(400).json({ error: "title parametresi gereklidir." });
   }
@@ -1691,13 +1823,73 @@ app.get("/api/lyrics", async (req, res) => {
   const { title: cleanTitle, artist: cleanArtist } = sanitizeTitleAndArtist(rawTitle, rawArtist);
   const songDuration = duration ? Math.max(30, Number(duration)) : 210;
 
-  const cacheKey = `lyrics_${cleanTitle.toLowerCase()}___${cleanArtist.toLowerCase()}`;
+  const cacheKey = `gemini_lyrics_${cleanTitle.toLowerCase()}___${cleanArtist.toLowerCase()}`;
   const cached = getCached(lyricsCache, cacheKey);
-  if (cached) {
+  if (cached && !req.query.force && !req.body?.force) {
     return res.json(cached);
   }
 
-  // 1. Multi-stage LRCLIB queries
+  const aiResult = await fetchLyricsWithGeminiSearch(cleanTitle, cleanArtist, songDuration);
+  if (aiResult) {
+    const finalResult = {
+      title: cleanTitle,
+      artist: cleanArtist,
+      ...aiResult
+    };
+    setCached(lyricsCache, cacheKey, finalResult);
+    return res.json(finalResult);
+  }
+
+  // Fallback if AI couldn't reach
+  const fallback = {
+    title: cleanTitle,
+    artist: cleanArtist,
+    synced: true,
+    timedLyrics: [
+      { time: 0, text: `🎵 ${cleanTitle}` },
+      { time: 8, text: cleanArtist ? `🎤 ${cleanArtist}` : "SoundPulse Oynatılıyor" },
+      { time: 25, text: "Sözler internet üzerinde aranıyor..." },
+      { time: 55, text: "SoundPulse Canlı Şarkı Sözleri" }
+    ],
+    plainLyrics: `${cleanTitle}\n${cleanArtist}\n\nSoundPulse Canlı Şarkı Sözleri`,
+    source: "fallback"
+  };
+  return res.json(fallback);
+});
+
+// Synchronized Lyrics API (Multi-tier LRCLIB + Gemini AI Synced Engine)
+app.get("/api/lyrics", async (req, res) => {
+  const { title, artist, duration, forceGemini } = req.query;
+  if (!title || typeof title !== "string") {
+    return res.status(400).json({ error: "title parametresi gereklidir." });
+  }
+
+  const rawTitle = title.trim();
+  const rawArtist = (artist && typeof artist === "string") ? artist.trim() : "";
+  const { title: cleanTitle, artist: cleanArtist } = sanitizeTitleAndArtist(rawTitle, rawArtist);
+  const songDuration = duration ? Math.max(30, Number(duration)) : 210;
+
+  const cacheKey = `lyrics_v4_${cleanTitle.toLowerCase()}___${cleanArtist.toLowerCase()}`;
+  const cached = getCached(lyricsCache, cacheKey);
+  if (cached && !forceGemini) {
+    return res.json(cached);
+  }
+
+  // If forceGemini is requested, directly invoke Gemini Web Search
+  if (forceGemini === "true" || forceGemini === "1") {
+    const aiResult = await fetchLyricsWithGeminiSearch(cleanTitle, cleanArtist, songDuration);
+    if (aiResult) {
+      const result = {
+        title: cleanTitle,
+        artist: cleanArtist,
+        ...aiResult
+      };
+      setCached(lyricsCache, cacheKey, result);
+      return res.json(result);
+    }
+  }
+
+  // 1. Multi-stage LRCLIB queries with various search variations
   try {
     const searchEndpoints = [
       // 1A. Exact match with duration
@@ -1708,8 +1900,10 @@ app.get("/api/lyrics", async (req, res) => {
       `https://lrclib.net/api/search?track_name=${encodeURIComponent(cleanTitle)}&artist_name=${encodeURIComponent(cleanArtist)}`,
       // 1D. Full query search
       `https://lrclib.net/api/search?q=${encodeURIComponent(`${cleanTitle} ${cleanArtist}`.trim())}`,
-      // 1E. Search with track title alone if artist had multiple collaborators
-      `https://lrclib.net/api/search?q=${encodeURIComponent(cleanTitle)}`
+      // 1E. Search with track title alone
+      `https://lrclib.net/api/search?q=${encodeURIComponent(cleanTitle)}`,
+      // 1F. Search with raw original title
+      `https://lrclib.net/api/search?q=${encodeURIComponent(rawTitle)}`
     ];
 
     for (const ep of searchEndpoints) {
@@ -1725,7 +1919,7 @@ app.get("/api/lyrics", async (req, res) => {
 
         if (Array.isArray(data) && data.length > 0) {
           // Find best matching item in array
-          targetItem = data.find((d: any) => d.syncedLyrics) || data[0];
+          targetItem = data.find((d: any) => d.syncedLyrics) || data.find((d: any) => d.plainLyrics) || data[0];
         } else if (data && (data.syncedLyrics || data.plainLyrics)) {
           targetItem = data;
         }
@@ -1781,59 +1975,20 @@ app.get("/api/lyrics", async (req, res) => {
     console.warn("LRCLIB multi-stage notice:", e);
   }
 
-  // 2. AI Gemini Real Synced Lyrics Generation (Turkish & International)
+  // 2. AI Gemini Automatic Internet Search & Synced Lyrics Generation
   try {
-    const prompt = `You are a world-class music lyrics encyclopedia.
-Provide the 100% authentic, accurate, and original complete lyrics for the song "${cleanTitle}" by "${cleanArtist}".
-Song approximate length: ${Math.round(songDuration)} seconds.
-
-Requirements:
-1. Provide the REAL and complete lyrics of this exact song in its original language (Turkish, English, etc.).
-2. Break down into synchronized lines ("timedLyrics") formatted in ascending timestamp seconds matching the natural vocal rhythm and timing of the song, from verse 1 intro (~6-15s) to outro.
-3. In "plainLyrics", provide the complete formatted song lyrics text with verses and chorus.
-4. If this is an instrumental track with no vocals, return empty timedLyrics [] and plainLyrics "[Enstrümantal Parça]".
-
-Output strictly valid JSON according to schema.`;
-
-    const lyricsSchema = {
-      type: Type.OBJECT,
-      properties: {
-        timedLyrics: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              time: { type: Type.NUMBER },
-              text: { type: Type.STRING }
-            },
-            required: ["time", "text"]
-          }
-        },
-        plainLyrics: { type: Type.STRING }
-      },
-      required: ["timedLyrics", "plainLyrics"]
-    };
-
-    const aiLyrics = await generateJsonWithGemini<{ timedLyrics: { time: number; text: string }[]; plainLyrics: string }>(
-      prompt,
-      lyricsSchema,
-      ["gemini-3.7-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"]
-    );
-
-    if (aiLyrics && Array.isArray(aiLyrics.timedLyrics) && aiLyrics.timedLyrics.length > 0) {
+    const aiResult = await fetchLyricsWithGeminiSearch(cleanTitle, cleanArtist, songDuration);
+    if (aiResult && aiResult.timedLyrics.length > 0) {
       const result = {
         title: cleanTitle,
         artist: cleanArtist,
-        synced: true,
-        timedLyrics: aiLyrics.timedLyrics.sort((a, b) => a.time - b.time),
-        plainLyrics: aiLyrics.plainLyrics || aiLyrics.timedLyrics.map(t => t.text).join("\n"),
-        source: "gemini_synced"
+        ...aiResult
       };
       setCached(lyricsCache, cacheKey, result);
       return res.json(result);
     }
   } catch (geminiErr) {
-    console.warn("Gemini lyrics synthesis notice:", geminiErr);
+    console.warn("Gemini automatic lyrics synthesis notice:", geminiErr);
   }
 
   // 3. Fallback rhythmic lines

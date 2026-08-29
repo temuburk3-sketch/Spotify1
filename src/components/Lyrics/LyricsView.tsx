@@ -16,10 +16,15 @@ import {
   Flame,
   Volume2,
   RefreshCw,
-  Sliders
+  Sliders,
+  Globe,
+  Loader2,
+  CheckCircle2,
+  Bot,
+  ExternalLink
 } from 'lucide-react';
 import { Track } from '../../types';
-import { fetchLyricsForTrack, LyricsResponse } from '../../services/lyricsService';
+import { fetchLyricsForTrack, fetchLyricsWithGemini, LyricsResponse } from '../../services/lyricsService';
 import { detectTrackTheme } from '../../services/recommendationService';
 
 interface LyricsViewProps {
@@ -49,13 +54,22 @@ export const LyricsView: React.FC<LyricsViewProps> = memo(({
 }) => {
   const [lyricsData, setLyricsData] = useState<LyricsResponse | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isGeminiSearching, setIsGeminiSearching] = useState<boolean>(false);
   const [autoFollow, setAutoFollow] = useState<boolean>(true);
   const [fontSize, setFontSize] = useState<'normal' | 'large' | 'huge'>('large');
   const [viewMode, setViewMode] = useState<'synced' | 'plain'>('synced');
   const [copied, setCopied] = useState<boolean>(false);
   const [isKaraokeMode, setIsKaraokeMode] = useState<boolean>(false);
+  const [statusNotification, setStatusNotification] = useState<string | null>(null);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
+
+  const showNotification = (msg: string) => {
+    setStatusNotification(msg);
+    setTimeout(() => {
+      setStatusNotification((prev) => (prev === msg ? null : prev));
+    }, 4000);
+  };
 
   // Fetch lyrics when track changes
   useEffect(() => {
@@ -71,6 +85,11 @@ export const LyricsView: React.FC<LyricsViewProps> = memo(({
       if (isMounted) {
         setLyricsData(res);
         setIsLoading(false);
+
+        // If lyrics are not authentic or were only fallback, automatically trigger Gemini Web Search
+        if (res.source === 'fallback' || res.source === 'local_fallback') {
+          handleSearchWithGemini(false);
+        }
       }
     });
 
@@ -78,6 +97,32 @@ export const LyricsView: React.FC<LyricsViewProps> = memo(({
       isMounted = false;
     };
   }, [currentTrack?.id, currentTrack?.title, currentTrack?.artist]);
+
+  // Handler to search internet using Gemini AI
+  const handleSearchWithGemini = async (isManualClick: boolean = true) => {
+    if (!currentTrack) return;
+    setIsGeminiSearching(true);
+    if (isManualClick) {
+      showNotification('✨ Gemini şarkı sözlerini internette arıyor...');
+    }
+
+    try {
+      const result = await fetchLyricsWithGemini(currentTrack, true);
+      if (result && Array.isArray(result.timedLyrics) && result.timedLyrics.length > 0) {
+        setLyricsData(result);
+        if (isManualClick) {
+          showNotification('✨ Şarkı sözleri Gemini AI ile internetten bulunup senkronize edildi!');
+        }
+      }
+    } catch (err) {
+      console.warn('Gemini search failed:', err);
+      if (isManualClick) {
+        showNotification('Şarkı sözleri aranırken bir sorun oluştu.');
+      }
+    } finally {
+      setIsGeminiSearching(false);
+    }
+  };
 
   // Timed lines from response or fallback
   const timedLyrics = useMemo(() => {
@@ -153,6 +198,9 @@ export const LyricsView: React.FC<LyricsViewProps> = memo(({
     );
   }
 
+  const isGeminiSourced = lyricsData?.source === 'gemini_search_grounded' || lyricsData?.source === 'gemini_synced';
+  const isFallbackSourced = lyricsData?.source === 'fallback' || lyricsData?.source === 'local_fallback';
+
   return (
     <div className="flex-1 flex flex-col h-full bg-neutral-950 relative overflow-hidden select-none">
       {/* Dynamic Ambient Background Blur */}
@@ -162,6 +210,14 @@ export const LyricsView: React.FC<LyricsViewProps> = memo(({
           backgroundImage: `radial-gradient(circle at 50% 30%, #10b981 0%, #064e3b 50%, #000000 100%)`
         }}
       />
+
+      {/* Status Toast Notification */}
+      {statusNotification && (
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 z-50 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 text-white text-xs sm:text-sm font-bold px-4 py-2 rounded-full shadow-2xl flex items-center gap-2 border border-emerald-400/40 animate-bounce">
+          <Sparkles className="w-4 h-4 text-amber-300" />
+          <span>{statusNotification}</span>
+        </div>
+      )}
 
       {/* Top Header Controls Bar */}
       <div className="relative z-10 px-4 sm:px-8 py-4 border-b border-white/10 bg-neutral-950/80 backdrop-blur-xl flex items-center justify-between gap-3 shrink-0">
@@ -187,6 +243,29 @@ export const LyricsView: React.FC<LyricsViewProps> = memo(({
 
         {/* Action Buttons */}
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {/* Gemini AI Web Search Button */}
+          <button
+            onClick={() => handleSearchWithGemini(true)}
+            disabled={isGeminiSearching}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition cursor-pointer border ${
+              isGeminiSearching
+                ? 'bg-purple-950/70 border-purple-500/50 text-purple-300 animate-pulse'
+                : isGeminiSourced
+                ? 'bg-purple-900/30 border-purple-500/40 text-purple-300 hover:bg-purple-900/50'
+                : 'bg-gradient-to-r from-purple-600/20 to-emerald-600/20 border-purple-500/30 text-neutral-200 hover:border-purple-400 hover:text-white'
+            }`}
+            title="Gemini AI ile internette şarkı sözlerini ara ve senkronize et"
+          >
+            {isGeminiSearching ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-400" />
+            ) : (
+              <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+            )}
+            <span className="hidden sm:inline">
+              {isGeminiSearching ? "Gemini Aranıyor..." : isGeminiSourced ? "Gemini ile Yenile" : "Gemini ile Bul"}
+            </span>
+          </button>
+
           {/* Karaoke Sing-Along Mode Toggle */}
           <button
             onClick={() => setIsKaraokeMode(!isKaraokeMode)}
@@ -228,7 +307,7 @@ export const LyricsView: React.FC<LyricsViewProps> = memo(({
               else if (fontSize === 'large') setFontSize('huge');
               else setFontSize('normal');
             }}
-            className="p-2 rounded-xl bg-neutral-900 border border-neutral-800 text-neutral-300 hover:text-white transition"
+            className="p-2 rounded-xl bg-neutral-900 border border-neutral-800 text-neutral-300 hover:text-white transition cursor-pointer"
             title={`Yazı Boyutu: ${fontSize}`}
           >
             {fontSize === 'huge' ? <ZoomOut className="w-4 h-4" /> : <ZoomIn className="w-4 h-4" />}
@@ -237,7 +316,7 @@ export const LyricsView: React.FC<LyricsViewProps> = memo(({
           {/* Copy Lyrics */}
           <button
             onClick={handleCopyLyrics}
-            className="p-2 rounded-xl bg-neutral-900 border border-neutral-800 text-neutral-300 hover:text-white transition"
+            className="p-2 rounded-xl bg-neutral-900 border border-neutral-800 text-neutral-300 hover:text-white transition cursor-pointer"
             title="Şarkı Sözlerini Kopyala"
           >
             {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
@@ -247,7 +326,7 @@ export const LyricsView: React.FC<LyricsViewProps> = memo(({
           {onStartSongRadio && (
             <button
               onClick={() => onStartSongRadio(currentTrack)}
-              className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-neutral-900 border border-neutral-700 text-amber-300 hover:border-amber-400/60 transition"
+              className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-neutral-900 border border-neutral-700 text-amber-300 hover:border-amber-400/60 transition cursor-pointer"
               title="Bu şarkının tarzında benzer şarkılar radyosu başlat"
             >
               <Radio className="w-3.5 h-3.5" /> Şarkı Radyosu
@@ -263,19 +342,56 @@ export const LyricsView: React.FC<LyricsViewProps> = memo(({
           isKaraokeMode ? 'text-center' : ''
         }`}
       >
+        {/* Gemini Active Internet Search Banner */}
+        {isGeminiSearching && (
+          <div className="max-w-2xl mx-auto p-4 rounded-2xl bg-gradient-to-r from-purple-900/40 via-neutral-900 to-emerald-900/40 border border-purple-500/30 backdrop-blur-md flex items-center justify-between gap-3 shadow-2xl animate-pulse">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-purple-600/30 border border-purple-400/30 flex items-center justify-center text-purple-300 shrink-0">
+                <Bot className="w-5 h-5 animate-spin" />
+              </div>
+              <div>
+                <p className="text-xs sm:text-sm font-bold text-white flex items-center gap-1.5">
+                  <span>Gemini İnternette Şarkı Sözlerini Arıyor</span>
+                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                </p>
+                <p className="text-[11px] text-neutral-400">
+                  Resmi web veritabanları taranıyor ve zaman damgaları senkronize ediliyor...
+                </p>
+              </div>
+            </div>
+            <Loader2 className="w-5 h-5 animate-spin text-purple-400 shrink-0" />
+          </div>
+        )}
+
         {/* Sync Status Banner */}
-        <div className={`flex items-center justify-between mb-4 ${isKaraokeMode ? 'justify-center' : ''}`}>
-          <div className="flex items-center gap-2 text-xs font-bold text-neutral-400">
+        <div className={`flex items-center justify-between mb-4 flex-wrap gap-2 ${isKaraokeMode ? 'justify-center' : ''}`}>
+          <div className="flex items-center gap-2 text-xs font-bold text-neutral-400 flex-wrap">
             <Mic2 className="w-4 h-4 text-emerald-400" />
-            <span>
-              {lyricsData?.source === 'lrclib'
-                ? 'LRC Orijinal Senkronize'
-                : lyricsData?.source === 'gemini_synced'
-                ? 'Gemini AI Canlı Senkronize'
-                : lyricsData?.source === 'verified_catalog'
-                ? 'Doğrulanmış Orijinal Stüdyo Sözleri'
-                : 'Senkronize Canlı Akış'}
+            <span className="flex items-center gap-1.5">
+              {lyricsData?.source === 'gemini_search_grounded' ? (
+                <span className="inline-flex items-center gap-1 text-purple-300 bg-purple-950/60 px-2 py-0.5 rounded-full border border-purple-500/40">
+                  <Globe className="w-3 h-3 text-purple-400" /> Gemini AI (İnternet Arama Destekli)
+                </span>
+              ) : lyricsData?.source === 'gemini_synced' ? (
+                <span className="inline-flex items-center gap-1 text-purple-300 bg-purple-950/60 px-2 py-0.5 rounded-full border border-purple-500/40">
+                  <Sparkles className="w-3 h-3 text-purple-400" /> Gemini AI Canlı Senkronize
+                </span>
+              ) : lyricsData?.source === 'lrclib' ? (
+                <span className="text-emerald-400">LRC Orijinal Senkronize</span>
+              ) : lyricsData?.source === 'verified_catalog' ? (
+                <span className="text-emerald-400">Doğrulanmış Orijinal Stüdyo Sözleri</span>
+              ) : (
+                <span className="text-neutral-400">Senkronize Akış</span>
+              )}
             </span>
+
+            {/* Web sources pills if available */}
+            {lyricsData?.webSources && lyricsData.webSources.length > 0 && (
+              <span className="hidden md:inline-flex items-center gap-1 text-[10px] text-neutral-400 bg-neutral-900 px-2 py-0.5 rounded-full border border-neutral-800">
+                <Globe className="w-2.5 h-2.5 text-neutral-400" />
+                Kaynak: {lyricsData.webSources.join(', ')}
+              </span>
+            )}
           </div>
 
           {!isKaraokeMode && (
@@ -369,7 +485,7 @@ export const LyricsView: React.FC<LyricsViewProps> = memo(({
         <div className="flex items-center gap-3">
           <button
             onClick={onPrev}
-            className="p-2 text-neutral-300 hover:text-white transition active:scale-90"
+            className="p-2 text-neutral-300 hover:text-white transition active:scale-90 cursor-pointer"
             title="Önceki"
           >
             <SkipBack className="w-5 h-5 fill-current" />
@@ -377,7 +493,7 @@ export const LyricsView: React.FC<LyricsViewProps> = memo(({
 
           <button
             onClick={onTogglePlay}
-            className="w-11 h-11 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black flex items-center justify-center shadow-lg shadow-emerald-500/20 active:scale-95 transition"
+            className="w-11 h-11 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black flex items-center justify-center shadow-lg shadow-emerald-500/20 active:scale-95 transition cursor-pointer"
             title={isPlaying ? 'Duraklat' : 'Çal'}
           >
             {isPlaying ? (
@@ -389,7 +505,7 @@ export const LyricsView: React.FC<LyricsViewProps> = memo(({
 
           <button
             onClick={onNext}
-            className="p-2 text-neutral-300 hover:text-white transition active:scale-90"
+            className="p-2 text-neutral-300 hover:text-white transition active:scale-90 cursor-pointer"
             title="Sonraki"
           >
             <SkipForward className="w-5 h-5 fill-current" />

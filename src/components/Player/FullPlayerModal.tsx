@@ -394,8 +394,12 @@ export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
                   <span>CANLI SENKRONİZE SÖZLER</span>
                 </div>
                 {isLoadingLyrics ? (
-                  <span className="flex items-center gap-1 text-[11px] text-neutral-400">
-                    <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" /> Sözler aktarılıyor...
+                  <span className="flex items-center gap-1.5 text-[11px] text-purple-300 animate-pulse">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-400" /> Gemini Sözleri Arıyor...
+                  </span>
+                ) : lyricsData?.source === 'gemini_search_grounded' || lyricsData?.source === 'gemini_synced' ? (
+                  <span className="flex items-center gap-1 text-[11px] text-purple-300 bg-purple-950/60 px-2 py-0.5 rounded-full border border-purple-500/40">
+                    <Sparkles className="w-3.5 h-3.5 text-purple-400" /> Gemini AI Web Senkron
                   </span>
                 ) : lyricsData?.synced ? (
                   <span className="flex items-center gap-1 text-[11px] text-emerald-400">
