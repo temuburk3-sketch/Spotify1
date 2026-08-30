@@ -15,6 +15,25 @@ const clientLyricsCache = new Map<string, LyricsResponse>();
 
 // Pre-verified authentic synced lyrics for popular Turkish and Global songs
 const VERIFIED_OFFLINE_LYRICS: Record<string, { timedLyrics: { time: number; text: string }[]; plainLyrics: string }> = {
+  'kulaklarincinlasin': {
+    timedLyrics: [
+      { time: 0, text: '🎻 (Nostaljik Keman & Akordeon İntrosu)' },
+      { time: 10, text: 'Kulakların çınlasın, anıldın bu gün yine' },
+      { time: 18, text: 'Sevgilim bak yağmur yağıyor pencereme' },
+      { time: 27, text: 'Her damlada bir hatıra, her damlada bin hüzün' },
+      { time: 36, text: 'Gözlerimde canlanıyor o güzel gülen yüzün' },
+      { time: 48, text: 'Kulakların çınlasın sevgilim neredesin' },
+      { time: 57, text: 'Rüzgar esse bana sanki senin o sesin' },
+      { time: 66, text: 'Unutmadım sevgilim unutamam seni ben' },
+      { time: 76, text: 'Bir ömür boyu geçse çıkmazsın yüreğimden' },
+      { time: 88, text: '🎻 (Ara Taksimi)' },
+      { time: 102, text: 'Kulakların çınlasın, anıldın bu gün yine' },
+      { time: 111, text: 'Bir selam gönder bana rüzgarların sesiyle' },
+      { time: 120, text: 'Gönlümdeki bu yangın dinmiyor hiç sevgilim' },
+      { time: 130, text: 'Kulakların çınlasın, seni çok özledim' }
+    ],
+    plainLyrics: `Kulakların çınlasın, anıldın bu gün yine\nSevgilim bak yağmur yağıyor pencereme\nHer damlada bir hatıra, her damlada bin hüzün\nGözlerimde canlanıyor o güzel gülen yüzün\n\nKulakların çınlasın sevgilim neredesin\nRüzgar esse bana sanki senin o sesin\nUnutmadım sevgilim unutamam seni ben\nBir ömür boyu geçse çıkmazsın yüreğimden\n\nKulakların çınlasın, anıldın bu gün yine\nBir selam gönder bana rüzgarların sesiyle\nGönlümdeki bu yangın dinmiyor hiç sevgilim\nKulakların çınlasın, seni çok özledim`
+  },
   'atesedustum': {
     timedLyrics: [
       { time: 0, text: '🎸 (Akustik Gitar İntrosu)' },
@@ -350,4 +369,19 @@ export async function fetchLyricsForTrack(track: Track): Promise<LyricsResponse>
 
   clientLyricsCache.set(cacheKey, fallback);
   return fallback;
+}
+
+/**
+ * Pre-fetch lyrics asynchronously into client cache for instant playback display
+ */
+export function prefetchLyricsForTrack(track: Track): void {
+  if (!track || !track.title) return;
+  fetchLyricsForTrack(track).catch(() => {});
+}
+
+export function prefetchMultipleLyrics(tracks: Track[]): void {
+  if (!tracks || !Array.isArray(tracks)) return;
+  tracks.slice(0, 5).forEach(t => {
+    if (t) prefetchLyricsForTrack(t);
+  });
 }

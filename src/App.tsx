@@ -20,6 +20,7 @@ import { QueueDrawer } from './components/Queue/QueueDrawer';
 import { JoinRoomModal } from './components/Playlist/JoinRoomModal';
 import { InstallModal } from './components/InstallModal';
 import { LyricsView } from './components/Lyrics/LyricsView';
+import { prefetchLyricsForTrack } from './services/lyricsService';
 import { usePWAInstall } from './hooks/usePWAInstall';
 
 import {
@@ -260,6 +261,15 @@ export default function App() {
         console.warn('Audio Engine Event:', err);
       }
     });
+
+    // Explicitly bind system MediaSession lock screen actions (Next, Prev, Play, Pause, Seek)
+    audioEngine.setMediaSessionActionHandlers({
+      onPlay: () => handlersRef.current.handleTogglePlay?.(),
+      onPause: () => handlersRef.current.handleTogglePlay?.(),
+      onNext: () => handlersRef.current.handleNextTrack?.(),
+      onPrev: () => handlersRef.current.handlePrevTrack?.(),
+      onSeek: (to: number) => handlersRef.current.handleSeek?.(to)
+    });
   }, [repeatMode]);
 
   // Sleep timer interval
@@ -282,6 +292,7 @@ export default function App() {
   // Playback Control Handlers
   const handlePlayTrack = (track: Track, contextTracks?: Track[], contextName?: string) => {
     if (!track) return;
+    prefetchLyricsForTrack(track);
     setCurrentTrack(track);
     setIsPlaying(true);
     setPlayedTrackIds(prev => new Set(prev).add(track.id));
