@@ -150,3 +150,32 @@ export interface AudioSettings {
 
 export type RepeatMode = 'off' | 'all' | 'one';
 export type ShuffleMode = 'off' | 'smart' | 'random';
+
+export interface ArtistResult {
+  id: string;
+  name: string;
+  picture: string;
+  fans?: string;
+  nbAlbums?: number;
+  genres?: string[];
+  popularity?: number;
+  topTracks?: Track[];
+}
+
+export interface PlaylistSearchResult {
+  id: string;
+  name: string;
+  description: string;
+  coverUrl: string;
+  trackCount: number;
+  author?: string;
+  tracks?: Track[];
+  isUserPlaylist?: boolean;
+  source?: string;
+}
+
+export interface UnifiedSearchResults {
+  tracks: Track[];
+  artists: ArtistResult[];
+  playlists: PlaylistSearchResult[];
+}
