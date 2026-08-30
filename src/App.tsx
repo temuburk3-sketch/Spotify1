@@ -14,6 +14,7 @@ import { EqualizerModal } from './components/Playlist/EqualizerModal';
 import { OfflineManagerModal } from './components/Playlist/OfflineManagerModal';
 import { FolderManagerModal } from './components/Playlist/FolderManagerModal';
 import { AutoExpandPlaylistModal } from './components/Playlist/AutoExpandPlaylistModal';
+import { PlaylistMixerModal } from './components/Playlist/PlaylistMixerModal';
 import { PrivateModeModal } from './components/Settings/PrivateModeModal';
 import { PinLockScreen } from './components/Settings/PinLockScreen';
 import { QueueDrawer } from './components/Queue/QueueDrawer';
@@ -68,7 +69,8 @@ import {
   HardDrive,
   Sliders,
   ChevronRight,
-  Disc
+  Disc,
+  Shuffle
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -150,6 +152,7 @@ export default function App() {
   const [isOfflineManagerOpen, setIsOfflineManagerOpen] = useState(false);
   const [isFolderManagerOpen, setIsFolderManagerOpen] = useState(false);
   const [isAutoExpandOpen, setIsAutoExpandOpen] = useState(false);
+  const [isMixerOpen, setIsMixerOpen] = useState(false);
   const [isPrivateModeOpen, setIsPrivateModeOpen] = useState(false);
   const [isFullPlayerOpen, setIsFullPlayerOpen] = useState(false);
   const [isQueueOpen, setIsQueueOpen] = useState(false);
@@ -685,6 +688,57 @@ export default function App() {
     showToast('Çalma listesi grubu güncellendi');
   };
 
+  // Playlist Mixer / Blend Handlers
+  const handlePlayMixedTracks = (tracks: Track[], mixTitle: string) => {
+    if (tracks.length === 0) return;
+    const [first, ...rest] = tracks;
+    setPlaybackContext({
+      tracks: tracks,
+      name: mixTitle
+    });
+    setQueue(rest);
+    handlePlayTrack(first, tracks, mixTitle);
+    showToast(`🔀 "${mixTitle}" (${tracks.length} şarkı) çalmaya başladı!`);
+  };
+
+  const handleAddMixedToQueue = (tracks: Track[], mixTitle: string) => {
+    if (tracks.length === 0) return;
+    setQueue(prev => [...prev, ...tracks]);
+    showToast(`➕ "${mixTitle}" (${tracks.length} şarkı) çalma sırasına eklendi!`);
+  };
+
+  const handleCreateMixedPlaylist = (name: string, tracks: Track[]) => {
+    const newPlaylist: Playlist = {
+      id: `mixed_pl_${Date.now()}`,
+      name: name || 'Özel Mix',
+      description: `Harmanlanmış ${tracks.length} parça`,
+      coverUrl: tracks[0]?.coverUrl || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600',
+      tracks: tracks,
+      folderId: activeFolderId !== 'all' ? activeFolderId : undefined,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      isCollaborative: false
+    };
+    setPlaylists(prev => [newPlaylist, ...prev]);
+    setActivePlaylistId(newPlaylist.id);
+    setActiveView('playlist');
+    showToast(`✨ "${newPlaylist.name}" çalma listesi oluşturuldu!`);
+  };
+
+  const handleReshuffleQueue = () => {
+    if (queue.length <= 1) {
+      showToast('Sırada karıştırılacak yeterli şarkı yok');
+      return;
+    }
+    const shuffled = [...queue];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    setQueue(shuffled);
+    showToast(`🔀 Sıradaki ${shuffled.length} şarkı yeniden karıştırıldı!`);
+  };
+
   // Filter playlists by active folder
   const filteredPlaylists = useMemo(() => {
     if (activeFolderId === 'all') return playlists;
@@ -724,6 +778,7 @@ export default function App() {
         onOpenPrivateMode={() => setIsPrivateModeOpen(true)}
         onOpenRecommendations={() => setActiveView('recommendations')}
         onOpenInstallApp={() => setIsInstallModalOpen(true)}
+        onOpenPlaylistMixer={() => setIsMixerOpen(true)}
         isOfflineMode={isOfflineMode}
         onSearchFocus={() => setActiveView('search')}
       />
@@ -812,6 +867,7 @@ export default function App() {
             onOpenSpotifyImport={() => setIsSpotifyImportOpen(true)}
             onOpenLocalImport={() => setIsLocalImportOpen(true)}
             onOpenAutoExpand={() => setIsAutoExpandOpen(true)}
+            onOpenPlaylistMixer={() => setIsMixerOpen(true)}
             onUpvoteTrack={handleUpvoteTrack}
             onAddToQueue={(t) => {
               setQueue(prev => [...prev, t]);
@@ -867,19 +923,45 @@ export default function App() {
 
         {activeView === 'queue' && (
           <div className="flex-1 overflow-y-auto p-4 sm:p-6 max-w-3xl mx-auto w-full pb-56 sm:pb-44 custom-scrollbar">
-            <div className="flex items-center justify-between pb-4 mb-4 border-b border-neutral-800">
-              <h2 className="text-xl font-black text-white">Çalma Sırası & Bekleyenler</h2>
-              {queue.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-4 mb-4 border-b border-neutral-800">
+              <div>
+                <h2 className="text-xl font-black text-white">Çalma Sırası & Bekleyenler</h2>
+                <p className="text-xs text-neutral-400">Şarkıları harmanlayın, listeleri karıştırın ve akışı kontrol edin.</p>
+              </div>
+
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={() => {
-                    setQueue([]);
-                    showToast('Sıra temizlendi');
-                  }}
-                  className="text-xs text-rose-400 hover:underline font-bold"
+                  onClick={() => setIsMixerOpen(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-emerald-500/20 to-indigo-500/20 hover:from-emerald-500/30 hover:to-indigo-500/30 text-emerald-300 border border-emerald-500/40 rounded-xl text-xs font-bold transition shadow-xs cursor-pointer"
+                  title="Birden fazla listeyi harmanlayarak sıraya ekle"
                 >
-                  Sırayı Temizle
+                  <Shuffle className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Listeleri Sıraya Mixle</span>
                 </button>
-              )}
+
+                {queue.length > 1 && (
+                  <button
+                    onClick={handleReshuffleQueue}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 rounded-xl text-xs font-bold transition cursor-pointer"
+                    title="Sıradaki tüm şarkıları yeniden karıştır"
+                  >
+                    <Shuffle className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>Sırayı Karıştır</span>
+                  </button>
+                )}
+
+                {queue.length > 0 && (
+                  <button
+                    onClick={() => {
+                      setQueue([]);
+                      showToast('Sıra temizlendi');
+                    }}
+                    className="text-xs text-rose-400 hover:underline font-bold px-2 py-1 cursor-pointer"
+                  >
+                    Temizle
+                  </button>
+                )}
+              </div>
             </div>
 
             {currentTrack && (
@@ -1112,6 +1194,8 @@ export default function App() {
           });
         }}
         onClearQueue={() => setQueue([])}
+        onReshuffleQueue={handleReshuffleQueue}
+        onOpenMixer={() => setIsMixerOpen(true)}
         onUpvoteTrack={(trackId) => {
           setQueue(prev => {
             const updated = prev.map(t => t.id === trackId ? { ...t, upvotes: (t.upvotes || 0) + 1 } : t);
@@ -1119,6 +1203,15 @@ export default function App() {
           });
           showToast('👍 Şarkıya oy verildi, sırada öne geçti!');
         }}
+      />
+
+      <PlaylistMixerModal
+        isOpen={isMixerOpen}
+        onClose={() => setIsMixerOpen(false)}
+        playlists={playlists}
+        onPlayMixedTracks={handlePlayMixedTracks}
+        onAddMixedToQueue={handleAddMixedToQueue}
+        onCreateMixedPlaylist={handleCreateMixedPlaylist}
       />
 
       <JoinRoomModal

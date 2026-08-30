@@ -19,6 +19,7 @@ interface PlaylistDetailProps {
   onOpenSpotifyImport: () => void;
   onOpenLocalImport: () => void;
   onOpenAutoExpand: () => void;
+  onOpenPlaylistMixer?: () => void;
   onUpvoteTrack: (playlistId: string, trackId: string) => void;
   onAddToQueue: (track: Track) => void;
   onDownloadTrackOffline: (track: Track) => Promise<void>;
@@ -40,6 +41,7 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = memo(({
   onOpenSpotifyImport,
   onOpenLocalImport,
   onOpenAutoExpand,
+  onOpenPlaylistMixer,
   onUpvoteTrack,
   onAddToQueue,
   onDownloadTrackOffline,
@@ -266,6 +268,17 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = memo(({
           >
             <DownloadCloud className={`w-5 h-5 ${isDownloadingAll ? 'animate-bounce text-emerald-400' : ''}`} />
           </button>
+
+          {/* Playlist Mixer / Blend Button */}
+          {onOpenPlaylistMixer && (
+            <button
+              onClick={onOpenPlaylistMixer}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-emerald-600/30 to-indigo-600/30 hover:from-emerald-600/40 hover:to-indigo-600/40 text-emerald-300 rounded-full text-xs font-bold transition border border-emerald-500/40 cursor-pointer shadow-sm"
+              title="1'den fazla listeyi seçip birleştirin, akıllıca karıştırın veya sıraya ekleyin"
+            >
+              <Shuffle className="w-4 h-4 text-emerald-400" /> Listeleri Karıştır (Mix)
+            </button>
+          )}
 
           {/* Collaborative Modal */}
           <button

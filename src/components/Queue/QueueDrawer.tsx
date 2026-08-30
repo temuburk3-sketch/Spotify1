@@ -1,6 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, ListMusic, Play, Trash2, ArrowUp, ArrowDown, ThumbsUp, Sparkles, Disc, Heart } from 'lucide-react';
+import { 
+  X, 
+  ListMusic, 
+  Play, 
+  Trash2, 
+  ArrowUp, 
+  ArrowDown, 
+  ThumbsUp, 
+  Sparkles, 
+  Disc, 
+  Heart,
+  Shuffle,
+  Layers
+} from 'lucide-react';
 import { Track } from '../../types';
 import { isTrackFollowed, toggleFollowTrack, subscribeToFollowChanges } from '../../services/followService';
 
@@ -13,6 +26,8 @@ interface QueueDrawerProps {
   onRemoveFromQueue: (index: number) => void;
   onMoveQueueItem: (from: number, to: number) => void;
   onClearQueue: () => void;
+  onReshuffleQueue?: () => void;
+  onOpenMixer?: () => void;
   onUpvoteTrack?: (trackId: string) => void;
 }
 
@@ -25,6 +40,8 @@ export const QueueDrawer: React.FC<QueueDrawerProps> = ({
   onRemoveFromQueue,
   onMoveQueueItem,
   onClearQueue,
+  onReshuffleQueue,
+  onOpenMixer,
   onUpvoteTrack
 }) => {
   const [followTick, setFollowTick] = useState(0);
@@ -53,11 +70,21 @@ export const QueueDrawer: React.FC<QueueDrawerProps> = ({
               <ListMusic className="w-5 h-5 text-emerald-400" />
               <h2 className="text-base font-bold text-white">Çalma Sırası (Queue)</h2>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
+              {queue.length > 1 && onReshuffleQueue && (
+                <button
+                  onClick={onReshuffleQueue}
+                  className="flex items-center gap-1 px-2.5 py-1 text-xs text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 rounded-lg transition font-medium cursor-pointer"
+                  title="Sıradaki tüm şarkıları yeniden karıştır (Spotify Shuffle)"
+                >
+                  <Shuffle className="w-3.5 h-3.5" />
+                  <span>Sırayı Karıştır</span>
+                </button>
+              )}
               {queue.length > 0 && (
                 <button
                   onClick={onClearQueue}
-                  className="px-2.5 py-1 text-xs text-neutral-400 hover:text-rose-400 transition"
+                  className="px-2.5 py-1 text-xs text-neutral-400 hover:text-rose-400 transition cursor-pointer"
                   title="Sırayı Temizle"
                 >
                   Temizle
@@ -65,7 +92,7 @@ export const QueueDrawer: React.FC<QueueDrawerProps> = ({
               )}
               <button
                 onClick={onClose}
-                className="p-1.5 text-neutral-400 hover:text-white rounded-lg hover:bg-neutral-800 transition"
+                className="p-1.5 text-neutral-400 hover:text-white rounded-lg hover:bg-neutral-800 transition cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -73,6 +100,30 @@ export const QueueDrawer: React.FC<QueueDrawerProps> = ({
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 space-y-6">
+            {/* Quick Mixer Action in Queue */}
+            {onOpenMixer && (
+              <div className="p-3 bg-gradient-to-r from-emerald-950/40 via-neutral-950 to-indigo-950/40 border border-emerald-500/30 rounded-xl flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+                    <Layers className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-white truncate">Listeleri Sıraya Mixle</div>
+                    <div className="text-[10px] text-neutral-400 truncate">1'den fazla listeyi seçip bu sıraya harmanlayın</div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    onClose();
+                    onOpenMixer();
+                  }}
+                  className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs rounded-lg transition shrink-0 cursor-pointer"
+                >
+                  Listeleri Mixle
+                </button>
+              </div>
+            )}
+
             {/* Currently Playing */}
             {currentTrack && (
               <div>
@@ -103,13 +154,22 @@ export const QueueDrawer: React.FC<QueueDrawerProps> = ({
                 <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider">
                   Sıradaki Şarkılar ({queue.length})
                 </span>
+                {queue.length > 1 && onReshuffleQueue && (
+                  <button
+                    onClick={onReshuffleQueue}
+                    className="text-[11px] text-emerald-400 hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <Shuffle className="w-3 h-3" />
+                    <span>Yeniden Karıştır</span>
+                  </button>
+                )}
               </div>
 
               {queue.length === 0 ? (
                 <div className="p-8 text-center border border-dashed border-neutral-800 rounded-2xl bg-neutral-950/40">
                   <Disc className="w-8 h-8 text-neutral-600 mx-auto mb-2" />
                   <p className="text-xs text-neutral-400">Sırada başka şarkı yok</p>
-                  <p className="text-[11px] text-neutral-500 mt-1">Listelerden şarkı ekleyebilir veya otomatik sırayı dinleyebilirsiniz.</p>
+                  <p className="text-[11px] text-neutral-500 mt-1">Listelerden şarkı ekleyebilir veya "Listeleri Mixle" ile birden fazla listeyi harmanlayabilirsiniz.</p>
                 </div>
               ) : (
                 <div className="space-y-1.5">
@@ -123,7 +183,7 @@ export const QueueDrawer: React.FC<QueueDrawerProps> = ({
                       </span>
                       <button
                         onClick={() => onPlayTrackFromQueue(track, idx)}
-                        className="w-5 text-center text-emerald-400 hidden group-hover:block transition"
+                        className="w-5 text-center text-emerald-400 hidden group-hover:block transition cursor-pointer"
                       >
                         <Play className="w-4 h-4 fill-emerald-400" />
                       </button>
@@ -141,7 +201,7 @@ export const QueueDrawer: React.FC<QueueDrawerProps> = ({
                       {onUpvoteTrack && (
                         <button
                           onClick={() => onUpvoteTrack(track.id)}
-                          className="flex items-center gap-1 px-2 py-1 bg-neutral-900 hover:bg-emerald-500/20 text-neutral-400 hover:text-emerald-300 rounded-lg text-[10px] font-bold border border-neutral-800 transition"
+                          className="flex items-center gap-1 px-2 py-1 bg-neutral-900 hover:bg-emerald-500/20 text-neutral-400 hover:text-emerald-300 rounded-lg text-[10px] font-bold border border-neutral-800 transition cursor-pointer"
                           title="Parti Sırasında Yukarı Taşı (Oy Ver)"
                         >
                           <ThumbsUp className="w-3 h-3" />
@@ -175,20 +235,20 @@ export const QueueDrawer: React.FC<QueueDrawerProps> = ({
                         <button
                           disabled={idx === 0}
                           onClick={() => onMoveQueueItem(idx, idx - 1)}
-                          className="p-1 hover:text-white disabled:opacity-20 text-neutral-400"
+                          className="p-1 hover:text-white disabled:opacity-20 text-neutral-400 cursor-pointer"
                         >
                           <ArrowUp className="w-3.5 h-3.5" />
                         </button>
                         <button
                           disabled={idx === queue.length - 1}
                           onClick={() => onMoveQueueItem(idx, idx + 1)}
-                          className="p-1 hover:text-white disabled:opacity-20 text-neutral-400"
+                          className="p-1 hover:text-white disabled:opacity-20 text-neutral-400 cursor-pointer"
                         >
                           <ArrowDown className="w-3.5 h-3.5" />
                         </button>
                         <button
                           onClick={() => onRemoveFromQueue(idx)}
-                          className="p-1 hover:text-rose-400 text-neutral-400"
+                          className="p-1 hover:text-rose-400 text-neutral-400 cursor-pointer"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>

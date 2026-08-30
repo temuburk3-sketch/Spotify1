@@ -1,4 +1,5 @@
 import { Track, Playlist, ListeningHistoryItem, ListeningHabitsSummary, SmartRecommendationOptions } from '../types';
+import { searchUniversalTracks } from './universalSearchService';
 
 const HISTORY_KEY = 'soundpulse_listening_history';
 const PIN_KEY = 'soundpulse_user_pin';
@@ -22,6 +23,74 @@ export interface ThematicClassification {
   displayName: string;
   badge: string;
   color: string;
+}
+
+// ----------------------------------------------------
+// Related Artists Graph (Spotify-style Peer Mapping)
+// ----------------------------------------------------
+export const ARTIST_SIMILARITY_GRAPH: Record<string, string[]> = {
+  // Arabesk & Damar
+  'müslüm gürses': ['Ferdi Tayfur', 'Bergen', 'Azer Bülbül', 'Cengiz Kurtoğlu', 'Orhan Gencebay', 'Ebru Gündeş', 'Ahmet Kaya'],
+  'ferdi tayfur': ['Müslüm Gürses', 'Bergen', 'Azer Bülbül', 'Cengiz Kurtoğlu', 'Orhan Gencebay', 'İbrahim Tatlıses'],
+  'bergen': ['Müslüm Gürses', 'Ferdi Tayfur', 'Güllü', 'Kibariye', 'Cengiz Kurtoğlu', 'Ebru Gündeş'],
+  'azer bülbül': ['Müslüm Gürses', 'Ferdi Tayfur', 'Hakan Taşıyan', 'Bergen', 'Ahmet Kaya', 'Güllü'],
+  'cengiz kurtoğlu': ['Ümit Besen', 'Müslüm Gürses', 'Ferdi Tayfur', 'Hakan Altun', 'Coşkun Sabah', 'Arif Susam'],
+  'ibrahim tatlıses': ['Müslüm Gürses', 'Ferdi Tayfur', 'Mahsun Kırmızıgül', 'Ebru Gündeş', 'Sibel Can'],
+  'ahmet kaya': ['Müslüm Gürses', 'Selda Bağcan', 'Edip Akbayram', 'Grup Yorum', 'Cevdet Bağca', 'Deniz Koyuncu'],
+  'ebru gündeş': ['Sibel Can', 'Yıldız Tilbe', 'Müslüm Gürses', 'Gülben Ergen', 'Zara', 'Linet'],
+  'yıldız tilbe': ['Sezen Aksu', 'Sıla', 'Müslüm Gürses', 'Ebru Gündeş', 'Ceylan Ertem', 'Hakan Altun'],
+
+  // Türkçe Rock & Anadolu Rock
+  'duman': ['Mor ve Ötesi', 'Şebnem Ferah', 'Teoman', 'Adamlar', 'Madrigal', 'Yüzyüzeyken Konuşuruz', 'Athena', 'Kaan Tangöze'],
+  'mor ve ötesi': ['Duman', 'Şebnem Ferah', 'Teoman', 'Manga', 'Gripin', 'Pentagram', 'Redd'],
+  'şebnem ferah': ['Mor ve Ötesi', 'Duman', 'Teoman', 'Özlem Tekin', 'Ogün Sanlısoy', 'Pentagram'],
+  'teoman': ['Duman', 'Mor ve Ötesi', 'Şebnem Ferah', 'Madrigal', 'Kaan Tangöze', 'Pinhani', 'Haluk Levent'],
+  'manga': ['Mor ve Ötesi', 'Duman', 'Gripin', 'Athena', 'Pentagram', 'Model'],
+  'barış manço': ['Cem Karaca', 'Erkin Koray', 'Fikret Kızılok', 'Moğollar', 'Edip Akbayram', 'İlhan İrem'],
+  'cem karaca': ['Barış Manço', 'Erkin Koray', 'Moğollar', 'Selda Bağcan', 'Edip Akbayram'],
+  'erkin koray': ['Barış Manço', 'Cem Karaca', 'Moğollar', 'Fikret Kızılok', '3 Hürel'],
+  'adamlar': ['Yüzyüzeyken Konuşuruz', 'Dolu Kadehi Ters Tut', 'Madrigal', 'Büyük Ev Ablukada', 'Yaşlı Amca', 'Son Feci Bisiklet'],
+  'yüzyüzeyken konuşuruz': ['Adamlar', 'Dolu Kadehi Ters Tut', 'Madrigal', 'Son Feci Bisiklet', 'Yaşlı Amca', 'DKTT'],
+  'madrigal': ['Adamlar', 'Yüzyüzeyken Konuşuruz', 'Dolu Kadehi Ters Tut', 'Dedublüman', 'KÖFN', 'Pinhani'],
+  'pinhani': ['Madrigal', 'Mor ve Ötesi', 'Duman', 'Yüksek Sadakat', 'Gripin', 'Zakkum'],
+
+  // Türkçe Rap & Hip-Hop
+  'ceza': ['Sagopa Kajmer', 'Ezhel', 'Şanışer', 'Contra', 'No.1', 'Gazapizm', 'Allame', 'Jokzilla'],
+  'sagopa kajmer': ['Ceza', 'Kolera', 'Şanışer', 'Gazapizm', 'Defkhan', 'No.1', 'Dr. Fuchs'],
+  'ezhel': ['BLOK3', 'UZI', 'Motive', 'Ceza', 'Murda', 'Cakal', 'Reckol', 'Lvbel C5'],
+  'uzi': ['Motive', 'BLOK3', 'Cakal', 'Reckol', 'Lvbel C5', 'Ezhel', 'Heijan', 'Muti'],
+  'motive': ['UZI', 'BLOK3', 'Cakal', 'Ezhel', 'Bebeto', 'Era7capone', 'Ati242'],
+  'blok3': ['UZI', 'Motive', 'Cakal', 'Lvbel C5', 'Reckol', 'Ezhel'],
+  'şanışer': ['Sokrat ST', 'Ceza', 'Sagopa Kajmer', 'Contra', 'Gazapizm', 'Sehabe'],
+  'gazapizm': ['Ceza', 'Sagopa Kajmer', 'No.1', 'Cash Flow', 'Anıl Piyancı'],
+
+  // Türkçe Pop & Alternatif
+  'mert demir': ['Mabel Matiz', 'Semicenk', 'Simge', 'KÖFN', 'Emir Can İğrek', 'Zeynep Bastık', 'Melike Şahin'],
+  'mabel matiz': ['Mert Demir', 'Semicenk', 'KÖFN', 'Göksel', 'Sıla', 'Ceylan Ertem', 'Melike Şahin', 'Edis'],
+  'semicenk': ['Mert Demir', 'Doğu Swag', 'Rast', 'Burak Bulut', 'Kurtuluş Kuş', 'Simge', 'Reynmen'],
+  'simge': ['Mert Demir', 'Edis', 'Merve Özbey', 'İrem Derici', 'Zeynep Bastık', 'Hadise', 'Derya Uluğ'],
+  'tarkan': ['Kenan Doğulu', 'Mustafa Sandal', 'Murat Boz', 'Edis', 'Yalın', 'Burak Kut'],
+  'sezen aksu': ['Yıldız Tilbe', 'Sıla', 'Zuhal Olcay', 'Leman Sam', 'Nükhet Duru', 'Sertab Erener', 'Aşkın Nur Yengi'],
+  'edis': ['Tarkan', 'Mert Demir', 'Simge', 'Zeynep Bastık', 'Murat Boz', 'Gülşen'],
+  'emir can iğrek': ['Mert Demir', 'Mabel Matiz', 'KÖFN', 'Dedublüman', 'Madrigal', 'Pinhani'],
+  'melike şahin': ['Mabel Matiz', 'Mert Demir', 'Ceylan Ertem', 'Gaye Su Akyol', 'Evrencan Gündüz'],
+
+  // Global Hits & Synthwave
+  'the weeknd': ['Daft Punk', 'Kavinsky', 'Bruno Mars', 'Post Malone', 'Drake', 'Dua Lipa'],
+  'daft punk': ['The Weeknd', 'Kavinsky', 'Justice', 'Gorillaz', 'Empire of the Sun', 'M83'],
+  'kavinsky': ['The Weeknd', 'Daft Punk', 'Lazerhawk', 'Carpenter Brut', 'Perturbator', 'Miami Nights 1984'],
+  'dua lipa': ['The Weeknd', 'Taylor Swift', 'Billie Eilish', 'Ariana Grande', 'Olivia Rodrigo', 'Lady Gaga']
+};
+
+export function getRelatedArtists(artistName: string): string[] {
+  if (!artistName) return [];
+  const lower = artistName.toLowerCase().trim();
+  for (const [key, related] of Object.entries(ARTIST_SIMILARITY_GRAPH)) {
+    if (lower.includes(key) || key.includes(lower)) {
+      return related;
+    }
+  }
+  return [];
 }
 
 // ----------------------------------------------------
@@ -59,7 +128,7 @@ export function detectTrackTheme(track: { title?: string; artist?: string; genre
     return {
       category: 'arabesk_damar',
       displayName: 'Arabesk & Damar',
-      badge: '📻 Arabesk Radyosu',
+      badge: '🥀 Arabesk Radyosu',
       color: 'text-amber-400 bg-amber-500/10 border-amber-500/30'
     };
   }
@@ -85,7 +154,8 @@ export function detectTrackTheme(track: { title?: string; artist?: string; genre
     text.includes('adamlar') ||
     text.includes('dolu kadehi') ||
     text.includes('rock') ||
-    text.includes('anadolu rock')
+    text.includes('anadolu rock') ||
+    text.includes('metal')
   ) {
     return {
       category: 'turkce_rock',
@@ -132,7 +202,8 @@ export function detectTrackTheme(track: { title?: string; artist?: string; genre
     text.includes('m83') ||
     text.includes('synthwave') ||
     text.includes('retrowave') ||
-    text.includes('80s')
+    text.includes('80s') ||
+    text.includes('cyberpunk')
   ) {
     return {
       category: 'synthwave_retro',
@@ -167,7 +238,8 @@ export function detectTrackTheme(track: { title?: string; artist?: string; genre
     text.includes('workout') ||
     text.includes('hardstyle') ||
     text.includes('edm') ||
-    text.includes('gym')
+    text.includes('gym') ||
+    text.includes('electronic')
   ) {
     return {
       category: 'workout_edm',
@@ -228,8 +300,7 @@ export function recordListeningEvent(track: Track, durationSeconds: number = 30,
       completed
     };
 
-    // Add to start and cap at 100 entries
-    history = [newItem, ...history.filter(h => !(h.title === track.title && h.artist === track.artist))].slice(0, 100);
+    history = [newItem, ...history.filter(h => !(h.title.toLowerCase() === track.title.toLowerCase() && h.artist.toLowerCase() === track.artist.toLowerCase()))].slice(0, 100);
     localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
   } catch (err) {
     console.warn('Failed to record listening event:', err);
@@ -253,23 +324,19 @@ export function getListeningHabitsSummary(): ListeningHabitsSummary {
       totalPlays: 0,
       totalDurationSeconds: 0,
       topGenres: [
-        { genre: 'Türkçe Pop', count: 12, percentage: 40 },
-        { genre: 'Synthwave', count: 8, percentage: 25 },
-        { genre: 'Anadolu Rock', count: 6, percentage: 20 },
-        { genre: 'Lo-Fi', count: 4, percentage: 15 }
+        { genre: 'Türkçe Pop', count: 1, percentage: 35 },
+        { genre: 'Türkçe Rock', count: 1, percentage: 30 },
+        { genre: 'Arabesk', count: 1, percentage: 20 },
+        { genre: 'Türkçe Rap', count: 1, percentage: 15 }
       ],
       topArtists: [
-        { artist: 'Mert Demir', count: 10 },
-        { artist: 'KÖFN', count: 8 },
-        { artist: 'Barış Manço', count: 6 },
-        { artist: 'The Weeknd', count: 5 }
+        { artist: 'Mert Demir', count: 1 },
+        { artist: 'Duman', count: 1 },
+        { artist: 'Müslüm Gürses', count: 1 },
+        { artist: 'Ceza', count: 1 }
       ],
-      recentTracks: [
-        { title: 'Antidepresan', artist: 'Mert Demir, Mabel Matiz', playedAt: new Date().toISOString() },
-        { title: 'Bi’ Tek Ben Anlarım', artist: 'KÖFN', playedAt: new Date().toISOString() },
-        { title: 'Gülpembe', artist: 'Barış Manço', playedAt: new Date().toISOString() }
-      ],
-      dominantVibe: 'Enerjik & Ritmik Pop / Synth'
+      recentTracks: [],
+      dominantVibe: 'Keşif Modu'
     };
   }
 
@@ -336,9 +403,13 @@ export interface SongRadioResult {
   tracks: Track[];
 }
 
-export async function fetchThematicSongRadio(seedTrack: Track, count: number = 10, excludeTitles: string[] = []): Promise<SongRadioResult> {
+export async function fetchThematicSongRadio(seedTrack: Track, count: number = 15, excludeIds: string[] = []): Promise<SongRadioResult> {
   const classification = detectTrackTheme(seedTrack);
+  const excludeSet = new Set(excludeIds.map(id => id.toLowerCase()));
+  excludeSet.add(seedTrack.id.toLowerCase());
+  excludeSet.add(seedTrack.title.toLowerCase());
 
+  // 1. Try Server API first
   try {
     const res = await fetch('/api/radio/track', {
       method: 'POST',
@@ -348,7 +419,7 @@ export async function fetchThematicSongRadio(seedTrack: Track, count: number = 1
         artist: seedTrack.artist,
         genre: seedTrack.genre || classification.displayName,
         count,
-        excludeTitles
+        excludeIds: Array.from(excludeSet)
       })
     });
 
@@ -356,8 +427,8 @@ export async function fetchThematicSongRadio(seedTrack: Track, count: number = 1
       const data = await res.json();
       if (Array.isArray(data.tracks) && data.tracks.length > 0) {
         return {
-          radioTitle: data.radioTitle || `📻 ${seedTrack.artist || seedTrack.title} Radyosu`,
-          themeName: data.themeName || classification.displayName,
+          radioTitle: data.radioTitle || `${seedTrack.artist} Radyosu`,
+          themeName: classification.displayName,
           themeCategory: classification.category,
           badge: classification.badge,
           tracks: data.tracks
@@ -365,190 +436,48 @@ export async function fetchThematicSongRadio(seedTrack: Track, count: number = 1
       }
     }
   } catch (err) {
-    console.warn('Song Radio online API failed, using curated thematic pool:', err);
+    console.warn('Song Radio online API failed, executing client-side related artist query:', err);
   }
 
-  // Curated Fallbacks based on category
-  let fallbackTracks: Track[] = [];
+  // 2. Client-side Spotify-like Related Artist Query
+  const related = getRelatedArtists(seedTrack.artist);
+  const searchQueries = [
+    seedTrack.artist,
+    ...related.slice(0, 4),
+    classification.displayName
+  ].filter(Boolean);
 
-  if (classification.category === 'arabesk_damar') {
-    fallbackTracks = [
-      {
-        id: `rad_arb_1`,
-        title: 'Affet',
-        artist: 'Müslüm Gürses',
-        album: 'Aşk Tesadüfleri Sever',
-        duration: 268,
-        coverUrl: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600',
-        audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview122/v4/fb/3c/74/fb3c7480-781d-1830-3edd-fd15bdb23406/mzaf_17024654962565086082.plus.aac.p.m4a',
-        youtubeId: 'qQWwN5q6U7g',
-        genre: 'Arabesk / Damar',
-        recommendationReason: 'Müslüm Baba’dan unutulmaz bir arabesk rock şaheseri.',
-        matchScore: 99,
-        addedAt: new Date().toISOString()
-      },
-      {
-        id: `rad_arb_2`,
-        title: 'Nilüfer',
-        artist: 'Müslüm Gürses',
-        album: 'Aşk Tesadüfleri Sever',
-        duration: 250,
-        coverUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600',
-        audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/15/84/08/15840844-8e98-e477-10dd-c2a82e30b2a3/mzaf_17204737277130849361.plus.aac.p.m4a',
-        youtubeId: '6vYnO6zMh4w',
-        genre: 'Arabesk / Damar',
-        recommendationReason: 'Derin keman partisyonları ve içe işleyen arabesk vokaller.',
-        matchScore: 98,
-        addedAt: new Date().toISOString()
-      },
-      {
-        id: `rad_arb_3`,
-        title: 'Ben De Özledim',
-        artist: 'Ferdi Tayfur',
-        album: 'Ben De Özledim',
-        duration: 245,
-        coverUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=600',
-        audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview116/v4/ae/9d/83/ae9d833e-c551-a08e-f9f3-1cb68138d233/mzaf_2262890875392296175.plus.aac.p.m4a',
-        youtubeId: '3tX9_K6Tf_8',
-        genre: 'Arabesk / Damar',
-        recommendationReason: 'Ferdi Tayfur’un elektro-bağlama ve hüzün dolu klasiği.',
-        matchScore: 97,
-        addedAt: new Date().toISOString()
-      },
-      {
-        id: `rad_arb_4`,
-        title: 'Sen Affetsen Ben Affetmem',
-        artist: 'Bergen',
-        album: 'Acıların Kadını',
-        duration: 275,
-        coverUrl: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600',
-        audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview126/v4/3c/a3/d1/3ca3d19c-d799-12af-0019-fd694b91812a/mzaf_11591350407176047081.plus.aac.p.m4a',
-        youtubeId: '4yVbUv6HkP8',
-        genre: 'Arabesk / Damar',
-        recommendationReason: 'Acıların Kadını Bergen’den Türk arabesk tarihine geçen başyapıt.',
-        matchScore: 98,
-        addedAt: new Date().toISOString()
-      },
-      {
-        id: `rad_arb_5`,
-        title: 'Duyanlara Duymayanlara',
-        artist: 'Cengiz Kurtoğlu',
-        album: 'Unutulmayanlar',
-        duration: 260,
-        coverUrl: 'https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=600',
-        audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/17/b4/8f/17b48f9a-0b93-6bb8-fe1d-3a16623c2cfb/mzaf_9560252727299052414.plus.aac.p.m4a',
-        youtubeId: 'W8G7vL2bCsc',
-        genre: 'Taverna / Arabesk',
-        recommendationReason: 'Cengiz Kurtoğlu ile taverna ve arabesk nostaljisi.',
-        matchScore: 96,
-        addedAt: new Date().toISOString()
+  const radioTracks: Track[] = [];
+  const seenIds = new Set<string>();
+
+  for (const query of searchQueries) {
+    if (radioTracks.length >= count) break;
+    try {
+      const found = await searchUniversalTracks(query);
+      for (const t of found) {
+        const normTitle = t.title.toLowerCase().trim();
+        const normId = t.id.toLowerCase().trim();
+        if (
+          !seenIds.has(normId) &&
+          !excludeSet.has(normId) &&
+          !excludeSet.has(normTitle) &&
+          !normTitle.includes(seedTrack.title.toLowerCase().trim())
+        ) {
+          seenIds.add(normId);
+          radioTracks.push({
+            ...t,
+            recommendationReason: `${seedTrack.artist} tarzı Spotify benzeri radyo parçası`,
+            matchScore: Math.floor(90 + Math.random() * 9)
+          });
+        }
       }
-    ];
-  } else if (classification.category === 'turkce_rock') {
-    fallbackTracks = [
-      {
-        id: `rad_rck_1`,
-        title: 'Aman Aman',
-        artist: 'Duman',
-        album: 'Seni Kendime Sakladım',
-        duration: 245,
-        coverUrl: 'https://images.unsplash.com/photo-1498038432885-c6f3f1b912ee?w=600',
-        audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview122/v4/fb/3c/74/fb3c7480-781d-1830-3edd-fd15bdb23406/mzaf_17024654962565086082.plus.aac.p.m4a',
-        youtubeId: 'b_fLkJp2xQw',
-        genre: 'Türkçe Rock',
-        recommendationReason: 'Duman’ın elektro gitar riffleri ve vokalleri.',
-        matchScore: 98,
-        addedAt: new Date().toISOString()
-      },
-      {
-        id: `rad_rck_2`,
-        title: 'Bir Derdim Var',
-        artist: 'Mor ve Ötesi',
-        album: 'Dünya Yalan Söylüyor',
-        duration: 218,
-        coverUrl: 'https://images.unsplash.com/photo-1464375117522-1311d6a5b81f?w=600',
-        audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/15/84/08/15840844-8e98-e477-10dd-c2a82e30b2a3/mzaf_17204737277130849361.plus.aac.p.m4a',
-        youtubeId: 'v8H9gW7Fk_8',
-        genre: 'Türkçe Rock',
-        recommendationReason: 'Efsanevi Türk rock marşı.',
-        matchScore: 99,
-        addedAt: new Date().toISOString()
-      },
-      {
-        id: `rad_rck_3`,
-        title: 'Sil Baştan',
-        artist: 'Şebnem Ferah',
-        album: 'Kelimeler Yetse',
-        duration: 310,
-        coverUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600',
-        audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview116/v4/ae/9d/83/ae9d833e-c551-a08e-f9f3-1cb68138d233/mzaf_2262890875392296175.plus.aac.p.m4a',
-        youtubeId: 'N8f9wKl2mPq',
-        genre: 'Türkçe Rock',
-        recommendationReason: 'Şebnem Ferah’ın görkemli sesi ve solosu.',
-        matchScore: 97,
-        addedAt: new Date().toISOString()
-      }
-    ];
-  } else if (classification.category === 'turkce_rap') {
-    fallbackTracks = [
-      {
-        id: `rad_rap_1`,
-        title: 'Suspus',
-        artist: 'Ceza',
-        album: 'Suspus',
-        duration: 254,
-        coverUrl: 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=600',
-        audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview126/v4/3c/a3/d1/3ca3d19c-d799-12af-0019-fd694b91812a/mzaf_11591350407176047081.plus.aac.p.m4a',
-        youtubeId: 'H8kM3wW8xP0',
-        genre: 'Türkçe Rap',
-        recommendationReason: 'Türkçe rapin teknik flow şaheseri.',
-        matchScore: 99,
-        addedAt: new Date().toISOString()
-      },
-      {
-        id: `rad_rap_2`,
-        title: 'Neyim Var Ki',
-        artist: 'Ceza ft. Sagopa Kajmer',
-        album: 'Rapstar',
-        duration: 215,
-        coverUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=600',
-        audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/17/b4/8f/17b48f9a-0b93-6bb8-fe1d-3a16623c2cfb/mzaf_9560252727299052414.plus.aac.p.m4a',
-        youtubeId: 'Jk7F9vW8xL0',
-        genre: 'Türkçe Rap',
-        recommendationReason: 'Tüm zamanların en çok dinlenen kült rap klasiği.',
-        matchScore: 99,
-        addedAt: new Date().toISOString()
-      }
-    ];
-  } else {
-    fallbackTracks = [
-      {
-        id: `rad_pop_1`,
-        title: 'Karakol',
-        artist: 'Mabel Matiz',
-        album: 'Fatih',
-        duration: 234,
-        coverUrl: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600',
-        audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview122/v4/fb/3c/74/fb3c7480-781d-1830-3edd-fd15bdb23406/mzaf_17024654962565086082.plus.aac.p.m4a',
-        genre: 'Türkçe Pop',
-        recommendationReason: 'Melodik synthesizer altyapısı ve modern pop vokalleri.',
-        matchScore: 98,
-        addedAt: new Date().toISOString()
-      },
-      {
-        id: `rad_pop_2`,
-        title: 'Ateşe Düştüm',
-        artist: 'Mert Demir',
-        album: 'Ateşe Düştüm',
-        duration: 231,
-        coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/43/39/bb/4339bbf7-d2c3-22ed-90e7-9a14416780c8/196922638558_Cover.jpg/600x600bb.jpg',
-        audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview126/v4/3c/a3/d1/3ca3d19c-d799-12af-0019-fd694b91812a/mzaf_11591350407176047081.plus.aac.p.m4a',
-        genre: 'Akustik / Pop',
-        recommendationReason: 'Akustik gitar ve samimi vokal altyapısı.',
-        matchScore: 98,
-        addedAt: new Date().toISOString()
-      }
-    ];
+    } catch {}
+  }
+
+  // Natural radio shuffle
+  for (let i = radioTracks.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [radioTracks[i], radioTracks[j]] = [radioTracks[j], radioTracks[i]];
   }
 
   return {
@@ -556,60 +485,18 @@ export async function fetchThematicSongRadio(seedTrack: Track, count: number = 1
     themeName: classification.displayName,
     themeCategory: classification.category,
     badge: classification.badge,
-    tracks: fallbackTracks
+    tracks: radioTracks.slice(0, count)
   };
 }
 
 // ----------------------------------------------------
-// 3. Smart Thematic Next Track Selector
-// ----------------------------------------------------
-
-export function selectSmartThematicNextTrack(
-  currentTrack: Track | null,
-  availableTracks: Track[],
-  playedTrackIds: Set<string> = new Set()
-): Track | null {
-  if (!availableTracks || availableTracks.length === 0) return null;
-  if (!currentTrack) return availableTracks[0];
-
-  const currentTheme = detectTrackTheme(currentTrack);
-
-  // Unplayed tracks in the playlist
-  const unplayed = availableTracks.filter(t => t.id !== currentTrack.id && !playedTrackIds.has(t.id));
-  const pool = unplayed.length > 0 ? unplayed : availableTracks.filter(t => t.id !== currentTrack.id);
-
-  if (pool.length === 0) return availableTracks[0];
-
-  // 1. Exact theme match
-  const exactMatches = pool.filter(t => {
-    const tTheme = detectTrackTheme(t);
-    return tTheme.category === currentTheme.category;
-  });
-
-  if (exactMatches.length > 0) {
-    const randomIdx = Math.floor(Math.random() * exactMatches.length);
-    return exactMatches[randomIdx];
-  }
-
-  // 2. Same artist match
-  const sameArtist = pool.filter(t => t.artist.toLowerCase() === currentTrack.artist.toLowerCase());
-  if (sameArtist.length > 0) {
-    return sameArtist[0];
-  }
-
-  // 3. Fallback to random unplayed
-  const randomIdx = Math.floor(Math.random() * pool.length);
-  return pool[randomIdx];
-}
-
-// ----------------------------------------------------
-// 4. Smart Shuffle Mode Preference
+// 3. Smart Shuffle Mode Preference
 // ----------------------------------------------------
 
 export function getSmartShuffleEnabled(): boolean {
   try {
     const val = localStorage.getItem(SMART_SHUFFLE_KEY);
-    return val !== null ? JSON.parse(val) : true; // default true for Spotify-style smart thematic shuffle
+    return val !== null ? JSON.parse(val) : true;
   } catch {
     return true;
   }
@@ -622,21 +509,30 @@ export function setSmartShuffleEnabled(enabled: boolean): void {
 }
 
 // ----------------------------------------------------
-// 5. Smart AI Recommendations Fetcher
+// 4. Smart AI Recommendations Fetcher (Spotify-style)
 // ----------------------------------------------------
 
 export async function fetchSmartRecommendations(options: SmartRecommendationOptions = {}): Promise<Track[]> {
-  try {
-    const habits = getListeningHabitsSummary();
-    const history = getListeningHistory();
+  const habits = getListeningHabitsSummary();
+  const history = getListeningHistory();
+  const playlistTracks = options.playlistTracks || [];
+  const count = options.count || 12;
 
+  // Build exclusion list
+  const existingSet = new Set<string>();
+  for (const t of [...history, ...playlistTracks]) {
+    if (t.title) existingSet.add(t.title.toLowerCase().trim());
+  }
+
+  // 1. Try Server API
+  try {
     const payload = {
       history: history.slice(0, 10),
       topGenres: habits.topGenres.map(g => g.genre),
       topArtists: habits.topArtists.map(a => a.artist),
       mood: options.mood || 'all',
-      count: options.count || 8,
-      playlistTracks: options.playlistTracks || []
+      count,
+      playlistTracks
     };
 
     const res = await fetch('/api/recommendations/smart', {
@@ -652,48 +548,157 @@ export async function fetchSmartRecommendations(options: SmartRecommendationOpti
       }
     }
   } catch (err) {
-    console.warn('Smart recommendations fetch failed, using offline fallback:', err);
+    console.warn('Smart recommendations server request failed, running client-side recommendation engine:', err);
   }
 
-  // Fallback if network/offline
-  return [
-    {
-      id: `fallback_rec_1`,
-      title: 'Karakol',
-      artist: 'Mabel Matiz',
-      album: 'Fatih',
-      duration: 234,
-      coverUrl: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600',
-      audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview122/v4/fb/3c/74/fb3c7480-781d-1830-3edd-fd15bdb23406/mzaf_17024654962565086082.plus.aac.p.m4a',
-      genre: 'Türkçe Pop',
-      recommendationReason: 'Antidepresan ve Mert Demir dinlemelerinizle eşleşen modern melodik altyapı.',
-      matchScore: 98,
-      addedAt: new Date().toISOString()
-    },
-    {
-      id: `fallback_rec_2`,
-      title: 'Save Your Tears',
-      artist: 'The Weeknd',
-      album: 'After Hours',
-      duration: 215,
-      coverUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=600',
-      audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/17/b4/8f/17b48f9a-0b93-6bb8-fe1d-3a16623c2cfb/mzaf_9560252727299052414.plus.aac.p.m4a',
-      genre: 'Synthwave',
-      recommendationReason: 'Blinding Lights sevenlere özel 80ler esintili ritmik başyapıt.',
-      matchScore: 99,
-      addedAt: new Date().toISOString()
-    }
-  ];
+  // 2. Client-side Intelligent Recommendation Engine
+  let searchSeeds: string[] = [];
+
+  if (playlistTracks.length > 0) {
+    // Playlist Context: Find dominant artists and genres in the playlist
+    const artistCounts: Record<string, number> = {};
+    const genreCounts: Record<string, number> = {};
+
+    playlistTracks.forEach(t => {
+      if (t.artist) artistCounts[t.artist] = (artistCounts[t.artist] || 0) + 1;
+      if (t.genre) genreCounts[t.genre] = (genreCounts[t.genre] || 0) + 1;
+    });
+
+    const topPlaylistArtists = Object.entries(artistCounts).sort((a, b) => b[1] - a[1]).map(e => e[0]);
+    const topPlaylistGenres = Object.entries(genreCounts).sort((a, b) => b[1] - a[1]).map(e => e[0]);
+
+    // Also get related artists for the top playlist artists
+    const relatedPeers: string[] = [];
+    topPlaylistArtists.slice(0, 3).forEach(art => {
+      relatedPeers.push(...getRelatedArtists(art));
+    });
+
+    searchSeeds = [
+      ...topPlaylistArtists.slice(0, 2),
+      ...relatedPeers.slice(0, 3),
+      ...topPlaylistGenres.slice(0, 2)
+    ].filter(Boolean);
+  } else if (options.mood && options.mood !== 'all') {
+    // Mood-specific query
+    const moodMap: Record<string, string[]> = {
+      arabesk: ['Müslüm Gürses', 'Ferdi Tayfur', 'Bergen', 'Azer Bülbül', 'Cengiz Kurtoğlu'],
+      turkish: ['Mert Demir', 'Mabel Matiz', 'Semicenk', 'Simge', 'Edis'],
+      rock: ['Duman', 'Mor ve Ötesi', 'Şebnem Ferah', 'Teoman', 'Adamlar'],
+      rap: ['Ezhel', 'Ceza', 'Sagopa Kajmer', 'UZI', 'Motive', 'BLOK3'],
+      energetic: ['Workout Hits', 'Tevvez', 'Hardstyle', 'EDM Festival', 'Neffex'],
+      chill: ['Lo-Fi Beats', 'Chillhop', 'Acoustic Pop', 'Study Beats'],
+      driving: ['Synthwave', 'The Weeknd', 'Kavinsky', 'Nightcall', 'Retrowave']
+    };
+    searchSeeds = moodMap[options.mood] || ['Türkçe Pop'];
+  } else {
+    // Habits / Global recommendations
+    searchSeeds = [
+      ...habits.topArtists.slice(0, 2).map(a => a.artist),
+      ...habits.topGenres.slice(0, 2).map(g => g.genre),
+      'Mert Demir',
+      'Duman',
+      'Müslüm Gürses',
+      'Ezhel'
+    ].filter(Boolean);
+  }
+
+  const recommendations: Track[] = [];
+  const seenIds = new Set<string>();
+
+  for (const seed of searchSeeds) {
+    if (recommendations.length >= count) break;
+    try {
+      const found = await searchUniversalTracks(seed);
+      for (const t of found) {
+        const normTitle = t.title.toLowerCase().trim();
+        const normId = t.id.toLowerCase().trim();
+        if (!seenIds.has(normId) && !existingSet.has(normTitle)) {
+          seenIds.add(normId);
+          recommendations.push({
+            ...t,
+            recommendationReason: `${seed} benzeri çalma listesi önerisi`,
+            matchScore: Math.floor(91 + Math.random() * 8)
+          });
+        }
+      }
+    } catch {}
+  }
+
+  // Shuffle for fresh listening discovery
+  for (let i = recommendations.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [recommendations[i], recommendations[j]] = [recommendations[j], recommendations[i]];
+  }
+
+  return recommendations.slice(0, count);
 }
 
 // ----------------------------------------------------
-// 3. Endless Autoplay Setting
+// 5. Smart Autoplay Selector (Next Track in Flow)
+// ----------------------------------------------------
+
+export function selectSmartThematicNextTrack(
+  currentTrack: Track,
+  pool: Track[],
+  playedTrackIds: Set<string>
+): Track | null {
+  if (!pool || pool.length === 0) return null;
+
+  const currentTheme = detectTrackTheme(currentTrack);
+  const relatedArtists = getRelatedArtists(currentTrack.artist).map(a => a.toLowerCase());
+
+  // Filter unplayed tracks
+  const unplayed = pool.filter(t => !playedTrackIds.has(t.id) && t.id !== currentTrack.id);
+  const candidatePool = unplayed.length > 0 ? unplayed : pool.filter(t => t.id !== currentTrack.id);
+
+  if (candidatePool.length === 0) return null;
+
+  // Score each candidate
+  const scored = candidatePool.map(candidate => {
+    let score = 0;
+    const candidateTheme = detectTrackTheme(candidate);
+
+    // Same category match
+    if (candidateTheme.category === currentTheme.category && currentTheme.category !== 'general') {
+      score += 50;
+    }
+
+    // Same artist
+    if (candidate.artist && currentTrack.artist && candidate.artist.toLowerCase() === currentTrack.artist.toLowerCase()) {
+      score += 40;
+    }
+
+    // Related artist match
+    if (candidate.artist && relatedArtists.some(r => candidate.artist.toLowerCase().includes(r))) {
+      score += 35;
+    }
+
+    // Same genre tag
+    if (candidate.genre && currentTrack.genre && candidate.genre.toLowerCase() === currentTrack.genre.toLowerCase()) {
+      score += 20;
+    }
+
+    // Popularity booster
+    score += (candidate.popularity || 50) * 0.1;
+
+    // Small random perturbation for variety
+    score += Math.random() * 10;
+
+    return { track: candidate, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0]?.track || null;
+}
+
+// ----------------------------------------------------
+// 6. Endless Autoplay Setting
 // ----------------------------------------------------
 
 export function getEndlessAutoplay(): boolean {
   try {
     const val = localStorage.getItem(ENDLESS_AUTOPLAY_KEY);
-    return val !== null ? JSON.parse(val) : true; // default true for smart autoplay
+    return val !== null ? JSON.parse(val) : true;
   } catch {
     return true;
   }
@@ -706,7 +711,7 @@ export function setEndlessAutoplay(enabled: boolean): void {
 }
 
 // ----------------------------------------------------
-// 4. Personal PIN & Master Passkey (Private Mode)
+// 7. Personal PIN & Master Passkey (Private Mode)
 // ----------------------------------------------------
 
 export function getStoredPIN(): string | null {
@@ -752,7 +757,7 @@ export function verifyPIN(entered: string): boolean {
 }
 
 // ----------------------------------------------------
-// 5. Full Personal Data Export / Import (Ownership)
+// 8. Full Personal Data Export / Import (Ownership)
 // ----------------------------------------------------
 
 export function exportPersonalDataJSON(playlists: Playlist[]): void {

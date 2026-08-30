@@ -11,6 +11,7 @@ interface HeaderProps {
   onOpenPrivateMode: () => void;
   onOpenRecommendations: () => void;
   onOpenInstallApp: () => void;
+  onOpenPlaylistMixer?: () => void;
   isOfflineMode: boolean;
   onSearchFocus: () => void;
 }
@@ -24,6 +25,7 @@ export const Header: React.FC<HeaderProps> = memo(({
   onOpenPrivateMode,
   onOpenRecommendations,
   onOpenInstallApp,
+  onOpenPlaylistMixer,
   isOfflineMode,
   onSearchFocus
 }) => {
@@ -69,6 +71,18 @@ export const Header: React.FC<HeaderProps> = memo(({
           <Download className="w-3.5 h-3.5 text-emerald-400" />
           <span className="hidden xs:inline sm:inline">Uygulama</span>
         </button>
+
+        {/* Playlist Mixer Button */}
+        {onOpenPlaylistMixer && (
+          <button
+            onClick={onOpenPlaylistMixer}
+            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-gradient-to-r from-indigo-500/20 to-emerald-500/20 hover:from-indigo-500/30 hover:to-emerald-500/30 text-indigo-300 border border-indigo-500/30 transition shrink-0 cursor-pointer shadow-xs"
+            title="Listeleri Birleştir & Mixle"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Listeleri Mixle</span>
+          </button>
+        )}
 
         {/* Private Mode & PIN Button */}
         <button
