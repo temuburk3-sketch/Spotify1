@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { Track, PlaylistSearchResult, Playlist } from '../../types';
 import { isTrackFollowed, toggleFollowTrack } from '../../services/followService';
+import { fetchUniversalPlaylistTracks } from '../../services/universalSearchService';
 
 interface PlaylistDetailModalProps {
   playlist: PlaylistSearchResult | null;
@@ -52,17 +53,12 @@ export const PlaylistDetailModal: React.FC<PlaylistDetailModalProps> = ({
       return;
     }
 
-    // Fetch tracks from API
+    // Fetch tracks from API / Universal Search
     setIsLoading(true);
     const fetchTracks = async () => {
       try {
-        const res = await fetch(`/api/playlist/tracks?playlistId=${encodeURIComponent(playlist.id)}&name=${encodeURIComponent(playlist.name)}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.tracks && Array.isArray(data.tracks)) {
-            setTracks(data.tracks);
-          }
-        }
+        const plTracks = await fetchUniversalPlaylistTracks(playlist.id, playlist.name);
+        setTracks(plTracks);
       } catch (err) {
         console.warn('Playlist tracks fetch error:', err);
       } finally {

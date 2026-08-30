@@ -326,7 +326,47 @@ export async function fetchLyricsForTrack(track: Track): Promise<LyricsResponse>
     console.warn('Lyrics fetch warning:', err);
   }
 
-  // 3. If track has internal timedLyrics, use them
+  // 3. Direct LRCLIB open API query for synced lyrics
+  try {
+    const cleanTitle = track.title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
+    const cleanArtist = (track.artist || '').replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
+    const lrcUrl = `https://lrclib.net/api/get?track_name=${encodeURIComponent(cleanTitle)}&artist_name=${encodeURIComponent(cleanArtist)}&duration=${Math.round(track.duration || 210)}`;
+    const lrcRes = await fetch(lrcUrl);
+    if (lrcRes.ok) {
+      const lrcData = await lrcRes.json();
+      if (lrcData.syncedLyrics) {
+        const lines = lrcData.syncedLyrics.split('\n');
+        const timed: { time: number; text: string }[] = [];
+        for (const line of lines) {
+          const match = line.match(/\[(\d+):(\d+(?:\.\d+)?)\](.*)/);
+          if (match) {
+            const min = parseInt(match[1], 10);
+            const sec = parseFloat(match[2]);
+            const text = match[3].trim();
+            if (text) {
+              timed.push({ time: Math.round(min * 60 + sec), text });
+            }
+          }
+        }
+        if (timed.length > 0) {
+          const resObj: LyricsResponse = {
+            title: track.title,
+            artist: track.artist || '',
+            synced: true,
+            timedLyrics: timed,
+            plainLyrics: lrcData.plainLyrics || timed.map(t => t.text).join('\n'),
+            source: 'lrclib_open'
+          };
+          clientLyricsCache.set(cacheKey, resObj);
+          return resObj;
+        }
+      }
+    }
+  } catch (lrcErr) {
+    console.warn('LRCLIB direct lookup notice:', lrcErr);
+  }
+
+  // 4. If track has internal timedLyrics, use them
   if (track.timedLyrics && track.timedLyrics.length > 0) {
     const trackResult: LyricsResponse = {
       title: track.title,

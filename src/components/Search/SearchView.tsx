@@ -9,6 +9,12 @@ import { Track, Playlist, ArtistResult, PlaylistSearchResult } from '../../types
 import { isTrackFollowed, toggleFollowTrack, subscribeToFollowChanges, getFollowedTracks, getFollowedArtists, isArtistFollowed, toggleFollowArtist } from '../../services/followService';
 import { ArtistDetailModal } from './ArtistDetailModal';
 import { PlaylistDetailModal } from './PlaylistDetailModal';
+import { 
+  searchUniversalTracks, 
+  searchUniversalArtists, 
+  searchUniversalPlaylists,
+  MASTER_ARTISTS_CATALOG 
+} from '../../services/universalSearchService';
 
 interface SearchViewProps {
   playlists: Playlist[];
@@ -307,15 +313,31 @@ export const SearchView: React.FC<SearchViewProps> = memo(({
 
     setIsLoadingChart(true);
     fetch(`/api/spotify/charts?chart=${activeChartId}`)
-      .then(res => res.json())
-      .then(data => {
-        if (data && data.tracks) {
+      .then(res => res.ok ? res.json() : null)
+      .then(async data => {
+        if (data && data.tracks && data.tracks.length > 0) {
           setChartData(data);
           clientChartCache.set(cacheKey, data);
+        } else {
+          // Direct fallback for Vercel/Static hosting
+          const query = activeChartId === 'top50_global' ? 'Top Hits 2024' : 'Türkçe Pop 2024';
+          const fallbackTracks = await searchUniversalTracks(query);
+          const chartPayload = {
+            title: activeChartId === 'top50_global' ? 'Spotify Global Top 50' : 'Spotify Türkiye Top 50',
+            description: 'En çok dinlenen listelerin zirvesindeki hit parçalar.',
+            tracks: fallbackTracks.slice(0, 50).map((t, idx) => ({ ...t, chartRank: idx + 1, popularity: 100 - idx }))
+          };
+          setChartData(chartPayload);
+          clientChartCache.set(cacheKey, chartPayload);
         }
       })
-      .catch(err => {
-        console.warn('Charts load notice:', err);
+      .catch(async () => {
+        const fallbackTracks = await searchUniversalTracks('Türkçe Pop');
+        setChartData({
+          title: 'Spotify Türkiye Top 50',
+          description: 'En çok dinlenen listelerin zirvesindeki hit parçalar.',
+          tracks: fallbackTracks
+        });
       })
       .finally(() => {
         setIsLoadingChart(false);
@@ -375,42 +397,22 @@ export const SearchView: React.FC<SearchViewProps> = memo(({
       }
 
       try {
-        // Parallel queries to server endpoints
-        const [tracksRes, artistsRes, playlistsRes] = await Promise.all([
-          fetch(`/api/audio/search?q=${encodeURIComponent(query)}&type=${searchType}`).then(r => r.ok ? r.json() : { results: [] }),
-          fetch(`/api/search/artists?q=${encodeURIComponent(query)}`).then(r => r.ok ? r.json() : { artists: [] }),
-          fetch(`/api/search/playlists?q=${encodeURIComponent(query)}`).then(r => r.ok ? r.json() : { playlists: [] })
+        // Parallel queries through universal search service with zero-failure fallback
+        const [rawTracks, rawArtists, rawPlaylists] = await Promise.all([
+          searchUniversalTracks(query, searchType),
+          searchUniversalArtists(query),
+          searchUniversalPlaylists(query, playlists)
         ]);
 
         if (isMounted) {
-          const rawTracks = tracksRes.results || [];
-          const rawArtists = artistsRes.artists || [];
-          let rawPlaylists: PlaylistSearchResult[] = playlistsRes.playlists || [];
-
-          // Also match local user playlists
-          const matchingUserPlaylists: PlaylistSearchResult[] = playlists
-            .filter(p => p.name.toLowerCase().includes(query.toLowerCase()))
-            .map(p => ({
-              id: p.id,
-              name: p.name,
-              description: `${p.tracks.length} Parça • Kendi Çalma Listeniz`,
-              coverUrl: p.tracks[0]?.coverUrl || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600',
-              trackCount: p.tracks.length,
-              author: 'Siz',
-              tracks: p.tracks,
-              isUserPlaylist: true
-            }));
-
-          const combinedPlaylists = [...matchingUserPlaylists, ...rawPlaylists];
-
           setOnlineSearchResults(rawTracks);
           setArtistSearchResults(rawArtists);
-          setPlaylistSearchResults(combinedPlaylists);
+          setPlaylistSearchResults(rawPlaylists);
 
           // Update client cache
           clientSearchCache.set(cacheKey, rawTracks);
           clientArtistCache.set(cacheKey, rawArtists);
-          clientPlaylistCache.set(cacheKey, combinedPlaylists);
+          clientPlaylistCache.set(cacheKey, rawPlaylists);
         }
       } catch (err) {
         console.warn('Search query error:', err);

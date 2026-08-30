@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { Track, ArtistResult, Playlist } from '../../types';
 import { isArtistFollowed, toggleFollowArtist, isTrackFollowed, toggleFollowTrack } from '../../services/followService';
+import { fetchUniversalArtistTracks } from '../../services/universalSearchService';
 
 interface ArtistDetailModalProps {
   artist: ArtistResult | null;
@@ -45,13 +46,8 @@ export const ArtistDetailModal: React.FC<ArtistDetailModalProps> = ({
 
     const fetchTracks = async () => {
       try {
-        const res = await fetch(`/api/artist/top-tracks?artistId=${encodeURIComponent(artist.id)}&artistName=${encodeURIComponent(artist.name)}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.tracks && Array.isArray(data.tracks)) {
-            setTracks(data.tracks);
-          }
-        }
+        const artistSongs = await fetchUniversalArtistTracks(artist.id, artist.name);
+        setTracks(artistSongs);
       } catch (err) {
         console.warn('Artist top tracks fetch error:', err);
       } finally {
