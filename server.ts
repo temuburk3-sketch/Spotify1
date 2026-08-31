@@ -3210,6 +3210,108 @@ app.get("/api/lyrics", async (req, res) => {
   return res.json(fallbackResult);
 });
 
+// ---------------------------------------------
+// Real-time TV & Smart Display Sync Hub
+// ---------------------------------------------
+interface TVRoomState {
+  roomCode: string;
+  currentTrack: any;
+  isPlaying: boolean;
+  currentTime: number;
+  duration: number;
+  lyricsData: any;
+  timestamp: number;
+}
+
+const tvRooms = new Map<string, TVRoomState>();
+const tvSseClients = new Map<string, Set<any>>();
+
+app.post("/api/tv/sync", (req, res) => {
+  const roomCode = (req.body.roomCode || "STAGE").toUpperCase();
+  const state: TVRoomState = {
+    roomCode,
+    currentTrack: req.body.currentTrack || null,
+    isPlaying: !!req.body.isPlaying,
+    currentTime: typeof req.body.currentTime === "number" ? req.body.currentTime : 0,
+    duration: typeof req.body.duration === "number" ? req.body.duration : 0,
+    lyricsData: req.body.lyricsData || null,
+    timestamp: Date.now()
+  };
+
+  tvRooms.set(roomCode, state);
+
+  // Broadcast to SSE clients for this room
+  const clients = tvSseClients.get(roomCode);
+  if (clients && clients.size > 0) {
+    const payload = `data: ${JSON.stringify(state)}\n\n`;
+    for (const client of clients) {
+      try {
+        client.write(payload);
+      } catch {
+        clients.delete(client);
+      }
+    }
+  }
+
+  return res.json({ success: true, roomCode, state });
+});
+
+app.get("/api/tv/sync", (req, res) => {
+  const roomCode = ((req.query.room as string) || "STAGE").toUpperCase();
+  const state = tvRooms.get(roomCode) || {
+    roomCode,
+    currentTrack: null,
+    isPlaying: false,
+    currentTime: 0,
+    duration: 0,
+    lyricsData: null,
+    timestamp: Date.now()
+  };
+  return res.json(state);
+});
+
+app.get("/api/tv/events", (req, res) => {
+  const roomCode = ((req.query.room as string) || "STAGE").toUpperCase();
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  if (!tvSseClients.has(roomCode)) {
+    tvSseClients.set(roomCode, new Set());
+  }
+  const clients = tvSseClients.get(roomCode)!;
+  clients.add(res);
+
+  // Send initial state immediately
+  const currentState = tvRooms.get(roomCode) || {
+    roomCode,
+    currentTrack: null,
+    isPlaying: false,
+    currentTime: 0,
+    duration: 0,
+    lyricsData: null,
+    timestamp: Date.now()
+  };
+  res.write(`data: ${JSON.stringify(currentState)}\n\n`);
+
+  // Keep-alive heartbeat every 15 seconds
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(": heartbeat\n\n");
+    } catch {
+      clearInterval(heartbeat);
+      clients.delete(res);
+    }
+  }, 15000);
+
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    clients.delete(res);
+  });
+});
+
 // Health check
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });

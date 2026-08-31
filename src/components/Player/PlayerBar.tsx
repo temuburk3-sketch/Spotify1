@@ -185,9 +185,19 @@ export const PlayerBar: React.FC<PlayerBarProps> = memo(({
 
         {/* Mobile Quick Action Buttons (< 640px) */}
         <div className="flex sm:hidden items-center gap-1 shrink-0">
+          {onOpenTVStage && (
+            <button
+              onClick={onOpenTVStage}
+              className="p-1.5 text-emerald-400 bg-emerald-500/10 rounded-lg border border-emerald-500/20 active:scale-95 transition"
+              title="TV & Sahne Modu"
+            >
+              <Tv className="w-4 h-4" />
+            </button>
+          )}
+
           <button
             onClick={onOpenFullPlayer}
-            className="p-2 text-neutral-400 hover:text-white active:scale-95 transition"
+            className="p-1.5 text-neutral-400 hover:text-white active:scale-95 transition"
             title="Sözler & Oynatıcı"
           >
             <Mic2 className="w-4 h-4" />
@@ -196,32 +206,32 @@ export const PlayerBar: React.FC<PlayerBarProps> = memo(({
           <button
             onClick={onPrev}
             disabled={!currentTrack}
-            className="p-2 text-neutral-300 hover:text-white disabled:opacity-30 active:scale-95 transition"
+            className="p-1.5 text-neutral-300 hover:text-white disabled:opacity-30 active:scale-95 transition"
             title="Önceki"
           >
-            <SkipBack className="w-5 h-5 fill-current" />
+            <SkipBack className="w-4 h-4 fill-current" />
           </button>
 
           <button
             onClick={onTogglePlay}
             disabled={!currentTrack}
-            className="w-10 h-10 rounded-full bg-emerald-500 active:bg-emerald-400 text-black flex items-center justify-center shadow-lg shadow-emerald-500/25 active:scale-90 transition"
+            className="w-9 h-9 rounded-full bg-emerald-500 active:bg-emerald-400 text-black flex items-center justify-center shadow-lg shadow-emerald-500/25 active:scale-90 transition"
             title={isPlaying ? 'Duraklat' : 'Çal'}
           >
             {isPlaying ? (
-              <Pause className="w-5 h-5 fill-current" />
+              <Pause className="w-4 h-4 fill-current" />
             ) : (
-              <Play className="w-5 h-5 fill-current ml-0.5" />
+              <Play className="w-4 h-4 fill-current ml-0.5" />
             )}
           </button>
 
           <button
             onClick={onNext}
             disabled={!currentTrack}
-            className="p-2 text-neutral-300 hover:text-white disabled:opacity-30 active:scale-95 transition"
+            className="p-1.5 text-neutral-300 hover:text-white disabled:opacity-30 active:scale-95 transition"
             title="Sonraki"
           >
-            <SkipForward className="w-5 h-5 fill-current" />
+            <SkipForward className="w-4 h-4 fill-current" />
           </button>
         </div>
 

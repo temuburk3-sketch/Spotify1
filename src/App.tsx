@@ -1117,7 +1117,19 @@ export default function App() {
 
       <TVLyricsStageModal
         isOpen={isTVStageOpen}
-        onClose={() => setIsTVStageOpen(false)}
+        onClose={() => {
+          setIsTVStageOpen(false);
+          try {
+            if (typeof window !== 'undefined' && window.location.search) {
+              const url = new URL(window.location.href);
+              if (url.searchParams.has('tv')) {
+                url.searchParams.delete('tv');
+                url.searchParams.delete('room');
+                window.history.replaceState({}, '', url.pathname);
+              }
+            }
+          } catch {}
+        }}
         currentTrack={currentTrack}
         isPlaying={isPlaying}
         currentTime={currentTime}

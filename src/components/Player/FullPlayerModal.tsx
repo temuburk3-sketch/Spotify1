@@ -24,7 +24,9 @@ import {
   UserPlus,
   Share2,
   Flame,
-  Tv
+  Tv,
+  ArrowLeft,
+  X
 } from 'lucide-react';
 import { Track, RepeatMode, ShuffleMode } from '../../types';
 import { AudioVisualizer } from './AudioVisualizer';
@@ -219,54 +221,62 @@ export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
         <div className="absolute inset-0 bg-gradient-to-b from-neutral-950/80 via-neutral-950/90 to-neutral-950 pointer-events-none" />
 
         {/* Top Header Bar */}
-        <div className="relative z-10 flex items-center justify-between px-6 py-4 border-b border-white/10 bg-black/40">
+        <div className="relative z-10 flex items-center justify-between px-3 sm:px-6 py-3 border-b border-white/10 bg-black/50 backdrop-blur-md">
           <button
             onClick={onClose}
-            className="p-2 text-neutral-400 hover:text-white rounded-full hover:bg-white/10 transition cursor-pointer"
-            title="Kapat"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-black font-black rounded-xl transition text-xs shadow-md shadow-emerald-500/20 cursor-pointer"
+            title="Ana Sayfaya Dön"
           >
-            <ChevronDown className="w-6 h-6" />
+            <ArrowLeft className="w-4 h-4 text-black" />
+            <span>Ana Sayfa</span>
           </button>
 
-          <div className="text-center min-w-0 px-4">
+          <div className="text-center min-w-0 px-2 flex-1 max-w-xs sm:max-w-md">
             <div className="flex items-center justify-center gap-1.5">
-              <span className="text-[10px] uppercase font-black text-emerald-400 tracking-widest block">
+              <span className="text-[10px] uppercase font-black text-emerald-400 tracking-widest block truncate">
                 {isRadioActive ? 'ŞARKI RADYOSU ÇALIYOR' : 'ŞU AN ÇALINIYOR'}
               </span>
               {isRadioActive && (
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
               )}
             </div>
-            <h2 className="text-sm font-bold text-white truncate max-w-sm">{track.title}</h2>
+            <h2 className="text-xs sm:text-sm font-bold text-white truncate">{track.title}</h2>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2">
             {onOpenTVStage && (
               <button
                 onClick={onOpenTVStage}
-                className="p-2 text-neutral-400 hover:text-emerald-400 rounded-full hover:bg-white/10 transition cursor-pointer"
+                className="p-1.5 sm:p-2 text-neutral-400 hover:text-emerald-400 rounded-xl hover:bg-white/10 transition cursor-pointer"
                 title="Televizyon ve Sahne Modunda Aç"
               >
-                <Tv className="w-5 h-5 text-emerald-400 animate-pulse" />
+                <Tv className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-400 animate-pulse" />
               </button>
             )}
             <button
               onClick={() => setIsImmersiveLyrics(!isImmersiveLyrics)}
-              className={`p-2 rounded-full transition cursor-pointer ${
+              className={`p-1.5 sm:p-2 rounded-xl transition cursor-pointer ${
                 isImmersiveLyrics
                   ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
                   : 'text-neutral-400 hover:text-white hover:bg-white/10'
               }`}
               title={isImmersiveLyrics ? 'Kapak Görünümüne Dön' : 'Tam Ekran Şarkı Sözleri'}
             >
-              <Mic2 className="w-5 h-5" />
+              <Mic2 className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
             <button
               onClick={onOpenEqualizer}
-              className="p-2 text-neutral-400 hover:text-emerald-400 rounded-full hover:bg-white/10 transition cursor-pointer"
+              className="p-1.5 sm:p-2 text-neutral-400 hover:text-emerald-400 rounded-xl hover:bg-white/10 transition cursor-pointer"
               title="Ekolayzer & Ses Ayarları"
             >
-              <Sliders className="w-5 h-5" />
+              <Sliders className="w-4 h-4 sm:w-5 sm:h-5" />
+            </button>
+            <button
+              onClick={onClose}
+              className="p-1.5 sm:p-2 bg-neutral-800 hover:bg-rose-600 text-neutral-300 hover:text-white rounded-xl border border-white/15 transition cursor-pointer active:scale-90"
+              title="Kapat"
+            >
+              <X className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
           </div>
         </div>
