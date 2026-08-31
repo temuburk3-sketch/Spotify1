@@ -21,11 +21,14 @@ import {
   Loader2,
   CheckCircle2,
   Bot,
-  ExternalLink
+  ExternalLink,
+  Tv
 } from 'lucide-react';
 import { Track } from '../../types';
 import { fetchLyricsForTrack, fetchLyricsWithGemini, LyricsResponse } from '../../services/lyricsService';
 import { detectTrackTheme } from '../../services/recommendationService';
+import { audioEngine } from '../../services/audioEngine';
+import { tvSyncService } from '../../services/tvSyncService';
 
 interface LyricsViewProps {
   currentTrack: Track | null;
@@ -38,6 +41,7 @@ interface LyricsViewProps {
   onSeek: (time: number) => void;
   onStartSongRadio?: (track: Track) => void;
   onPlayTrack?: (track: Track) => void;
+  onOpenTVStage?: () => void;
 }
 
 export const LyricsView: React.FC<LyricsViewProps> = memo(({
@@ -50,7 +54,8 @@ export const LyricsView: React.FC<LyricsViewProps> = memo(({
   onNext,
   onSeek,
   onStartSongRadio,
-  onPlayTrack
+  onPlayTrack,
+  onOpenTVStage
 }) => {
   const [lyricsData, setLyricsData] = useState<LyricsResponse | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -71,20 +76,35 @@ export const LyricsView: React.FC<LyricsViewProps> = memo(({
     }, 4000);
   };
 
-  // Fetch lyrics when track changes
+  // Fetch lyrics when track changes (Immediately reset old song lyrics)
   useEffect(() => {
     if (!currentTrack) {
       setLyricsData(null);
+      setIsLoading(false);
       return;
     }
 
     let isMounted = true;
+    // CRITICAL: Immediately clear stale lyrics from previous song
+    setLyricsData(null);
     setIsLoading(true);
 
     fetchLyricsForTrack(currentTrack).then((res) => {
       if (isMounted) {
         setLyricsData(res);
         setIsLoading(false);
+
+        // Update TV / Chromecast Cast Subtitle Track
+        if (res.timedLyrics && res.timedLyrics.length > 0) {
+          audioEngine.updateLyricsForCast(res.timedLyrics);
+          tvSyncService.broadcastState({
+            currentTrack,
+            isPlaying,
+            currentTime,
+            duration,
+            lyricsData: res
+          });
+        }
 
         // If lyrics are not authentic or were only fallback, automatically trigger Gemini Web Search
         if (res.source === 'fallback' || res.source === 'local_fallback') {
@@ -265,6 +285,18 @@ export const LyricsView: React.FC<LyricsViewProps> = memo(({
               {isGeminiSearching ? "Gemini Aranıyor..." : isGeminiSourced ? "Gemini ile Yenile" : "Gemini ile Bul"}
             </span>
           </button>
+
+          {/* TV & Sahne Karaoke Modu Button */}
+          {onOpenTVStage && (
+            <button
+              onClick={onOpenTVStage}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-black bg-gradient-to-r from-emerald-500/20 via-teal-500/20 to-emerald-500/20 hover:from-emerald-500/30 hover:to-teal-500/30 text-emerald-300 border border-emerald-400/40 transition cursor-pointer shadow-md shadow-emerald-500/10"
+              title="Televizyon ve Büyük Ekran Karaoke Görünümünü Aç"
+            >
+              <Tv className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+              <span className="hidden sm:inline">TV & Sahne</span>
+            </button>
+          )}
 
           {/* Karaoke Sing-Along Mode Toggle */}
           <button

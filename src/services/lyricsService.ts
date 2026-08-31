@@ -220,10 +220,20 @@ const VERIFIED_OFFLINE_LYRICS: Record<string, { timedLyrics: { time: number; tex
   }
 };
 
-function normalizeKey(str: string) {
-  return (str || '')
+function normalizeText(str: string): string {
+  if (!str) return '';
+  return str
+    .replace(/İ/g, 'i')
+    .replace(/I/g, 'i')
+    .replace(/ı/g, 'i')
+    .replace(/Ş|ş/g, 's')
+    .replace(/Ğ|ğ/g, 'g')
+    .replace(/Ü|ü/g, 'u')
+    .replace(/Ö|ö/g, 'o')
+    .replace(/Ç|ç/g, 'c')
     .toLowerCase()
-    .replace(/[^a-z0-9]/g, '');
+    .replace(/[^a-z0-9]/g, '')
+    .trim();
 }
 
 /**
@@ -289,10 +299,10 @@ export async function fetchLyricsForTrack(track: Track): Promise<LyricsResponse>
     return clientLyricsCache.get(cacheKey)!;
   }
 
-  // 1. Check embedded verified catalog first for zero-latency response
-  const normTitle = normalizeKey(track.title);
+  // 1. Check embedded verified catalog first for zero-latency response (Strict exact matching only)
+  const normTitle = normalizeText(track.title);
   for (const [key, val] of Object.entries(VERIFIED_OFFLINE_LYRICS)) {
-    if (normTitle.includes(key) || key.includes(normTitle)) {
+    if (normTitle === key || (normTitle.length >= 8 && normTitle.startsWith(key))) {
       const verifiedResult: LyricsResponse = {
         title: track.title,
         artist: track.artist || '',

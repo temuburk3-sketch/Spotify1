@@ -2980,9 +2980,19 @@ const KNOWN_TRACK_LYRICS: Record<string, { timedLyrics: { time: number; text: st
 };
 
 function normalizeSearchKey(str: string) {
-  return (str || '')
+  if (!str) return '';
+  return str
+    .replace(/İ/g, 'i')
+    .replace(/I/g, 'i')
+    .replace(/ı/g, 'i')
+    .replace(/Ş|ş/g, 's')
+    .replace(/Ğ|ğ/g, 'g')
+    .replace(/Ü|ü/g, 'u')
+    .replace(/Ö|ö/g, 'o')
+    .replace(/Ç|ç/g, 'c')
     .toLowerCase()
-    .replace(/[^a-z0-9]/g, '');
+    .replace(/[^a-z0-9]/g, '')
+    .trim();
 }
 
 // Fast Web Scraper for Song Lyrics (Genius / Lyrics sites / Google)
@@ -3121,11 +3131,10 @@ app.get("/api/lyrics", async (req, res) => {
     return res.json(cached);
   }
 
-  // 1. Immediate match in Known Catalog for ZERO LATENCY
+  // 1. Immediate match in Known Catalog for ZERO LATENCY (Strict match only)
   const normT = normalizeSearchKey(cleanTitle);
-  const normA = normalizeSearchKey(cleanArtist);
   for (const [key, val] of Object.entries(KNOWN_TRACK_LYRICS)) {
-    if (normT.includes(key) || key.includes(normT) || (normA && key.includes(normA) && normT.length >= 4)) {
+    if (normT === key || (normT.length >= 8 && normT.startsWith(key))) {
       const matchResult = {
         title: cleanTitle,
         artist: cleanArtist,

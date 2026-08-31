@@ -1167,6 +1167,62 @@ class AudioEngine {
     this.isSynthPlaying = false;
   }
 
+  // Update WebVTT Text Track for Google Cast / Chromecast TV Lyrics Display
+  private currentTrackVttUrl: string | null = null;
+
+  public updateLyricsForCast(timedLyrics: { time: number; text: string }[]): void {
+    if (typeof window === 'undefined' || typeof Blob === 'undefined') return;
+    try {
+      if (this.currentTrackVttUrl) {
+        URL.revokeObjectURL(this.currentTrackVttUrl);
+        this.currentTrackVttUrl = null;
+      }
+
+      // Remove existing tracks from audio element
+      const existingTracks = this.audio.querySelectorAll('track');
+      existingTracks.forEach((t) => t.remove());
+
+      if (!timedLyrics || timedLyrics.length === 0) return;
+
+      const formatVTTTime = (secs: number) => {
+        const h = Math.floor(secs / 3600);
+        const m = Math.floor((secs % 3600) / 60);
+        const s = Math.floor(secs % 60);
+        const ms = Math.floor((secs % 1) * 1000);
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
+      };
+
+      let vttContent = 'WEBVTT\n\n';
+      const dur = this.getDuration() || 240;
+      for (let i = 0; i < timedLyrics.length; i++) {
+        const item = timedLyrics[i];
+        const nextItem = timedLyrics[i + 1];
+        const startTime = Math.max(0, item.time);
+        const endTime = nextItem ? Math.min(nextItem.time, startTime + 15) : Math.min(dur, startTime + 8);
+        if (endTime > startTime) {
+          vttContent += `${formatVTTTime(startTime)} --> ${formatVTTTime(endTime)}\n${item.text}\n\n`;
+        }
+      }
+
+      const blob = new Blob([vttContent], { type: 'text/vtt;charset=utf-8' });
+      this.currentTrackVttUrl = URL.createObjectURL(blob);
+
+      const trackEl = document.createElement('track');
+      trackEl.kind = 'subtitles';
+      trackEl.label = 'Şarkı Sözleri (TV Canlı)';
+      trackEl.srclang = 'tr';
+      trackEl.src = this.currentTrackVttUrl;
+      trackEl.default = true;
+      this.audio.appendChild(trackEl);
+
+      if (this.audio.textTracks && this.audio.textTracks.length > 0) {
+        this.audio.textTracks[0].mode = 'showing';
+      }
+    } catch (e) {
+      console.warn('Cast lyrics track setup notice:', e);
+    }
+  }
+
   // MediaSession API setup for lock screen & background listening
   private setupMediaSession(track: Track) {
     if ('mediaSession' in navigator) {

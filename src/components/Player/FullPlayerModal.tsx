@@ -23,7 +23,8 @@ import {
   UserCheck,
   UserPlus,
   Share2,
-  Flame
+  Flame,
+  Tv
 } from 'lucide-react';
 import { Track, RepeatMode, ShuffleMode } from '../../types';
 import { AudioVisualizer } from './AudioVisualizer';
@@ -58,6 +59,7 @@ interface FullPlayerModalProps {
   onToggleABLoop: () => void;
   onOpenEqualizer: () => void;
   onStartSongRadio?: (track: Track) => void;
+  onOpenTVStage?: () => void;
 }
 
 export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
@@ -80,7 +82,8 @@ export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
   onToggleShuffle,
   onToggleABLoop,
   onOpenEqualizer,
-  onStartSongRadio
+  onStartSongRadio,
+  onOpenTVStage
 }) => {
   const [lyricsData, setLyricsData] = useState<LyricsResponse | null>(null);
   const [isLoadingLyrics, setIsLoadingLyrics] = useState<boolean>(false);
@@ -124,11 +127,17 @@ export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
     setTimeout(() => setShowFollowToast(null), 2500);
   };
 
-  // Fetch real lyrics on track load
+  // Fetch real lyrics on track load (Immediately clear old song lyrics)
   useEffect(() => {
-    if (!track || !isOpen) return;
+    if (!track || !isOpen) {
+      setLyricsData(null);
+      setIsLoadingLyrics(false);
+      return;
+    }
 
     let isMounted = true;
+    // CRITICAL: Clear stale lyrics from previous song immediately
+    setLyricsData(null);
     setIsLoadingLyrics(true);
 
     fetchLyricsForTrack(track).then((res) => {
@@ -232,6 +241,15 @@ export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            {onOpenTVStage && (
+              <button
+                onClick={onOpenTVStage}
+                className="p-2 text-neutral-400 hover:text-emerald-400 rounded-full hover:bg-white/10 transition cursor-pointer"
+                title="Televizyon ve Sahne Modunda Aç"
+              >
+                <Tv className="w-5 h-5 text-emerald-400 animate-pulse" />
+              </button>
+            )}
             <button
               onClick={() => setIsImmersiveLyrics(!isImmersiveLyrics)}
               className={`p-2 rounded-full transition cursor-pointer ${

@@ -21,6 +21,7 @@ import { QueueDrawer } from './components/Queue/QueueDrawer';
 import { JoinRoomModal } from './components/Playlist/JoinRoomModal';
 import { InstallModal } from './components/InstallModal';
 import { LyricsView } from './components/Lyrics/LyricsView';
+import { TVLyricsStageModal } from './components/Player/TVLyricsStageModal';
 import { prefetchLyricsForTrack } from './services/lyricsService';
 import { usePWAInstall } from './hooks/usePWAInstall';
 
@@ -157,6 +158,19 @@ export default function App() {
   const [isFullPlayerOpen, setIsFullPlayerOpen] = useState(false);
   const [isQueueOpen, setIsQueueOpen] = useState(false);
   const [isJoinRoomOpen, setIsJoinRoomOpen] = useState(false);
+  const [isTVStageOpen, setIsTVStageOpen] = useState(false);
+
+  // Detect ?tv=stage param for second screen or smart TV browsers
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('tv') === 'stage') {
+          setIsTVStageOpen(true);
+        }
+      } catch {}
+    }
+  }, []);
 
   // Toast Notification
   const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -779,6 +793,7 @@ export default function App() {
         onOpenRecommendations={() => setActiveView('recommendations')}
         onOpenInstallApp={() => setIsInstallModalOpen(true)}
         onOpenPlaylistMixer={() => setIsMixerOpen(true)}
+        onOpenTVStage={() => setIsTVStageOpen(true)}
         isOfflineMode={isOfflineMode}
         onSearchFocus={() => setActiveView('search')}
       />
@@ -1024,6 +1039,7 @@ export default function App() {
             onSeek={handleSeek}
             onStartSongRadio={handleStartSongRadio}
             onPlayTrack={handlePlayTrack}
+            onOpenTVStage={() => setIsTVStageOpen(true)}
           />
         )}
       </main>
@@ -1057,6 +1073,7 @@ export default function App() {
           onOpenEqualizer={() => setIsEqualizerOpen(true)}
           onOpenOfflineManager={() => setIsOfflineManagerOpen(true)}
           onStartSongRadio={handleStartSongRadio}
+          onOpenTVStage={() => setIsTVStageOpen(true)}
         />
 
         {/* Spotify-Style Bottom Nav Bar */}
@@ -1095,6 +1112,24 @@ export default function App() {
         onToggleABLoop={handleToggleABLoop}
         onOpenEqualizer={() => setIsEqualizerOpen(true)}
         onStartSongRadio={handleStartSongRadio}
+        onOpenTVStage={() => setIsTVStageOpen(true)}
+      />
+
+      <TVLyricsStageModal
+        isOpen={isTVStageOpen}
+        onClose={() => setIsTVStageOpen(false)}
+        currentTrack={currentTrack}
+        isPlaying={isPlaying}
+        currentTime={currentTime}
+        duration={duration}
+        volume={audioSettings.volume}
+        isMuted={audioSettings.muted}
+        onTogglePlay={handleTogglePlay}
+        onPrev={handlePrevTrack}
+        onNext={handleNextTrack}
+        onSeek={handleSeek}
+        onChangeVolume={handleChangeVolume}
+        onToggleMute={handleToggleMute}
       />
 
       {currentActivePlaylist && (

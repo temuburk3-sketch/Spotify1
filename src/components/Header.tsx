@@ -1,5 +1,5 @@
 import React, { memo } from 'react';
-import { Menu, Search, Link as LinkIcon, WifiOff, HardDrive, Sparkles, Users, Plus, ShieldCheck, Zap, Download } from 'lucide-react';
+import { Menu, Search, Link as LinkIcon, WifiOff, HardDrive, Sparkles, Users, Plus, ShieldCheck, Zap, Download, Tv } from 'lucide-react';
 import { Playlist } from '../types';
 
 interface HeaderProps {
@@ -12,6 +12,7 @@ interface HeaderProps {
   onOpenRecommendations: () => void;
   onOpenInstallApp: () => void;
   onOpenPlaylistMixer?: () => void;
+  onOpenTVStage?: () => void;
   isOfflineMode: boolean;
   onSearchFocus: () => void;
 }
@@ -26,6 +27,7 @@ export const Header: React.FC<HeaderProps> = memo(({
   onOpenRecommendations,
   onOpenInstallApp,
   onOpenPlaylistMixer,
+  onOpenTVStage,
   isOfflineMode,
   onSearchFocus
 }) => {
@@ -62,6 +64,18 @@ export const Header: React.FC<HeaderProps> = memo(({
 
       {/* Right: Quick actions & Premium Badges */}
       <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+        {/* TV & Sahne Karaoke Modu */}
+        {onOpenTVStage && (
+          <button
+            onClick={onOpenTVStage}
+            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-full text-xs font-black bg-gradient-to-r from-emerald-500/20 via-teal-500/20 to-emerald-500/20 hover:from-emerald-500/30 hover:to-teal-500/30 text-emerald-300 border border-emerald-500/40 transition shadow-xs cursor-pointer shrink-0"
+            title="Televizyon ve Büyük Ekran Karaoke Görünümü"
+          >
+            <Tv className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+            <span className="hidden sm:inline">TV & Sahne</span>
+          </button>
+        )}
+
         {/* Install / Download App Button */}
         <button
           onClick={onOpenInstallApp}

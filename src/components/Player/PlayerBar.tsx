@@ -1,5 +1,5 @@
 import React, { useState, memo, useEffect } from 'react';
-import { Play, Pause, SkipBack, SkipForward, Repeat, Shuffle, Volume2, VolumeX, Maximize2, Mic2, ListMusic, Sliders, WifiOff, HardDrive, Repeat1, Radio, Sparkles, Heart } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Repeat, Shuffle, Volume2, VolumeX, Maximize2, Mic2, ListMusic, Sliders, WifiOff, HardDrive, Repeat1, Radio, Sparkles, Heart, Tv } from 'lucide-react';
 import { Track, RepeatMode, ShuffleMode, AudioSettings } from '../../types';
 import { detectTrackTheme } from '../../services/recommendationService';
 import { isTrackFollowed, toggleFollowTrack, subscribeToFollowChanges } from '../../services/followService';
@@ -31,6 +31,7 @@ interface PlayerBarProps {
   onOpenEqualizer: () => void;
   onOpenOfflineManager: () => void;
   onStartSongRadio?: (track: Track) => void;
+  onOpenTVStage?: () => void;
 }
 
 export const PlayerBar: React.FC<PlayerBarProps> = memo(({
@@ -59,7 +60,8 @@ export const PlayerBar: React.FC<PlayerBarProps> = memo(({
   onOpenQueue,
   onOpenEqualizer,
   onOpenOfflineManager,
-  onStartSongRadio
+  onStartSongRadio,
+  onOpenTVStage
 }) => {
   const [isFollowed, setIsFollowed] = useState<boolean>(false);
 
@@ -321,6 +323,16 @@ export const PlayerBar: React.FC<PlayerBarProps> = memo(({
 
         {/* Desktop Right Controls (>= 640px) */}
         <div className="hidden sm:flex items-center justify-end gap-2 md:gap-3 sm:w-1/4 min-w-[160px]">
+          {onOpenTVStage && (
+            <button
+              onClick={onOpenTVStage}
+              className="p-1.5 text-neutral-400 hover:text-emerald-400 transition"
+              title="Televizyon & Sahne Karaoke Modu"
+            >
+              <Tv className="w-4 h-4 text-emerald-400 animate-pulse" />
+            </button>
+          )}
+
           <button
             onClick={onOpenFullPlayer}
             className="p-1.5 text-neutral-400 hover:text-white transition"
