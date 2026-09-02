@@ -167,32 +167,6 @@ class AudioEngine {
     });
 
     this.audio.addEventListener('ended', () => {
-      if (this.activeMode !== 'html5') return;
-
-      const currentAudioDuration = this.audio.duration || 0;
-      const expectedTrackDuration = this.currentTrack?.duration || 180;
-      const isShortPreview = currentAudioDuration > 0 && currentAudioDuration <= 40 && expectedTrackDuration > 45 && this.currentTrack?.source !== 'local';
-
-      if (isShortPreview && this.currentTrack) {
-        // Automatically switch to full song via YouTube so user NEVER gets cut off!
-        fetch(`/api/audio/full-source?title=${encodeURIComponent(this.currentTrack.title)}&artist=${encodeURIComponent(this.currentTrack.artist)}`)
-          .then(r => r.json())
-          .then(data => {
-            if (data.youtubeId && this.currentTrack) {
-              this.currentTrack.youtubeId = data.youtubeId;
-              this.playViaYouTube(data.youtubeId, Math.floor(currentAudioDuration));
-            } else if (this.currentTrack) {
-              this.playViaYouTubeSearch(`${this.currentTrack.title} ${this.currentTrack.artist}`, Math.floor(currentAudioDuration));
-            }
-          })
-          .catch(() => {
-            if (this.currentTrack) {
-              this.playViaYouTubeSearch(`${this.currentTrack.title} ${this.currentTrack.artist}`, Math.floor(currentAudioDuration));
-            }
-          });
-        return;
-      }
-
       if (this.onEndedCallback) {
         this.onEndedCallback();
       }
@@ -612,53 +586,33 @@ class AudioEngine {
     try {
       const cachedBlob = await getAudioBlobFromCache(track.id);
       if (cachedBlob) {
-        if (this.ytPlayer && this.ytPlayerReady) {
-          try { this.ytPlayer.pauseVideo(); } catch {}
-        }
-        this.clearYtInterval();
         return this.playViaHtml5(track, effectiveStart, URL.createObjectURL(cachedBlob));
       }
     } catch {}
 
-    // 2. If track has youtubeId, play 100% full song via YouTube Engine cleanly & instantly
-    if (track.youtubeId) {
-      this.audio.pause();
-      return this.playViaYouTube(track.youtubeId, effectiveStart);
-    }
-
-    // 3. If local file / blob URL or verified full stream, play via HTML5 Audio element
-    if (track.source === 'local' || (track.audioUrl && (track.audioUrl.startsWith('blob:') || track.audioUrl.startsWith('data:'))) || (track as any).isFullStream) {
-      if (this.ytPlayer && this.ytPlayerReady) {
-        try { this.ytPlayer.pauseVideo(); } catch {}
-      }
-      this.clearYtInterval();
+    // 2. If track has an audioUrl, play immediately via HTML5 audio
+    if (track.audioUrl && !track.audioUrl.startsWith('synth:')) {
       return this.playViaHtml5(track, effectiveStart);
     }
 
-    // 4. Resolve official full YouTube source first to guarantee full song playback
+    // 3. If audioUrl is missing, resolve it dynamically
     try {
-      if (this.ytPlayer && this.ytPlayerReady) {
-        try { this.ytPlayer.pauseVideo(); } catch {}
-      }
-      this.audio.pause();
-
-      const res = await fetch(`/api/audio/full-source?title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(track.artist)}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.youtubeId && this.currentTrack?.id === track.id) {
-          track.youtubeId = data.youtubeId;
-          if (data.duration && data.duration > 0) {
-            track.duration = data.duration;
-          }
-          return this.playViaYouTube(data.youtubeId, effectiveStart);
+      const matchRes = await fetch(`/api/audio/match?title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(track.artist)}`);
+      if (matchRes.ok) {
+        const matchData = await matchRes.json();
+        if (matchData && (matchData.previewUrl || matchData.audioUrl)) {
+          track.audioUrl = matchData.previewUrl || matchData.audioUrl;
+          if (matchData.duration) track.duration = matchData.duration;
+          if (matchData.coverUrl && !track.coverUrl) track.coverUrl = matchData.coverUrl;
+          return this.playViaHtml5(track, effectiveStart);
         }
       }
     } catch (e) {
-      console.warn('Full track resolve note:', e);
+      console.warn('Dynamic track match note:', e);
     }
 
-    // 5. If specific video ID was not returned, use YouTube search playback engine directly
-    return this.playViaYouTubeSearch(`${track.title} ${track.artist}`, effectiveStart);
+    // 4. Play via HTML5 or fallback
+    return this.playViaHtml5(track, effectiveStart);
   }
 
   private async playViaYouTube(youtubeId: string, startTime = 0): Promise<void> {
@@ -813,21 +767,17 @@ class AudioEngine {
   }
 
   public seek(seconds: number): void {
-    const targetDuration = this.currentTrack?.duration || 180;
+    const targetDuration = (this.audio.duration && !isNaN(this.audio.duration) && this.audio.duration > 0)
+      ? this.audio.duration
+      : (this.currentTrack?.duration || 180);
     const clamped = Math.max(0, Math.min(seconds, targetDuration));
 
-    if (this.activeMode === 'youtube' && this.ytPlayer) {
-      try {
-        this.ytPlayer.seekTo(clamped, true);
-        if (this.onTimeUpdateCallback) {
-          this.onTimeUpdateCallback(clamped, this.ytPlayer.getDuration() || targetDuration);
-        }
-        return;
-      } catch {}
-    }
+    try {
+      this.audio.currentTime = clamped;
+    } catch {}
 
-    if (this.audio.duration && !isNaN(this.audio.duration)) {
-      this.audio.currentTime = Math.max(0, Math.min(clamped, this.audio.duration));
+    if (this.onTimeUpdateCallback) {
+      this.onTimeUpdateCallback(clamped, targetDuration);
     }
   }
 
@@ -1116,6 +1066,7 @@ class AudioEngine {
   }
 
   public isPlaying(): boolean {
+    if (this.isSynthPlaying) return true;
     if (this.activeMode === 'youtube' && this.ytPlayer) {
       try {
         return this.ytPlayer.getPlayerState() === 1;
@@ -1123,7 +1074,7 @@ class AudioEngine {
         return false;
       }
     }
-    return !this.audio.paused && !this.audio.ended && this.audio.currentTime > 0;
+    return !this.audio.paused && !this.audio.ended && this.audio.readyState >= 2;
   }
 
   public getCurrentTime(): number {
