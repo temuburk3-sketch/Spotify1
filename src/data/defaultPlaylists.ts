@@ -4,7 +4,7 @@ export const DEFAULT_PLAYLISTS: Playlist[] = [
   {
     id: 'pl_turkce_hitler',
     name: 'Türkçe Pop & Akustik Hitleri',
-    description: 'En sevilen Türkçe pop, akustik ve alternatif hitler. Kesintisiz tam sürüm şarkılar, sınırsız atlama ve internetsiz dinleme özelliğiyle.',
+    description: 'En sevilen Türkçe pop, akustik ve alternatif hitler. Orijinal ses önizlemeleri, sınırsız atlama ve internetsiz dinleme özelliğiyle.',
     coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music122/v4/cd/6a/fb/cd6afb23-3442-e7ab-3b39-46f458bcad40/196922249655_Cover.jpg/600x600bb.jpg',
     colorTheme: 'from-emerald-900 to-slate-950',
     createdAt: '2026-01-10T12:00:00Z',

@@ -147,17 +147,17 @@ async function getSpotifyWebToken(): Promise<string | null> {
 
 // Audio stream helper: search YouTube for 100% full song official audio stream/video ID & duration
 async function searchFullSongVideoId(title: string, artist: string, excludeId?: string): Promise<{ youtubeId: string; duration?: number; candidateIds?: string[] } | null> {
-  const cleanTitle = title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').replace(/feat\..*$/i, '').trim();
-  const cleanArtist = (artist || '').replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').replace(/feat\..*$/i, '').trim();
+  const cleanTitle = title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
+  const cleanArtist = (artist || '').replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
   const cacheKey = `${cleanTitle.toLowerCase()}___${cleanArtist.toLowerCase()}${excludeId ? `___ex_${excludeId}` : ''}`;
 
   const cached = videoIdCache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS && cached.result) {
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
     return cached.result;
   }
 
-  // 1. YouTube direct search with multiple query variations
   try {
+    // Queries targeting official audio / studio master
     const queries = [
       `${cleanTitle} ${cleanArtist} Official Audio`,
       `${cleanTitle} ${cleanArtist} Topic`,
@@ -171,9 +171,8 @@ async function searchFullSongVideoId(title: string, artist: string, excludeId?: 
       const ytSearchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query.trim())}`;
       const res = await fetch(ytSearchUrl, {
         headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-          "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
-          "Cookie": "CONSENT=PENDING+999; SOCS=CAESEwgDEgk2MTQ1NzY1NjgaAnRyIAEaBgiA_LyaBg;"
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+          "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"
         }
       });
       if (!res.ok) continue;
@@ -203,6 +202,7 @@ async function searchFullSongVideoId(title: string, artist: string, excludeId?: 
                 if (parts.length === 2) durSecs = parts[0] * 60 + parts[1];
                 else if (parts.length === 3) durSecs = parts[0] * 3600 + parts[1] * 60 + parts[2];
 
+                // Accept regular songs between 40 sec and 15 min
                 if (durSecs >= 40 && durSecs <= 900 && !foundResult) {
                   foundResult = { youtubeId: videoId, duration: durSecs, candidateIds: collectedCandidates };
                 }
@@ -232,72 +232,10 @@ async function searchFullSongVideoId(title: string, artist: string, excludeId?: 
       }
     }
   } catch (e) {
-    console.warn("YouTube videoId lookup notice:", e);
+    console.warn("YouTube videoId lookup error:", e);
   }
 
-  // 2. Invidious / Piped Public Open APIs Fallback
-  const invidiousInstances = [
-    'https://inv.nadeko.net',
-    'https://invidious.nerdvpn.de',
-    'https://yt.drgnz.club',
-    'https://invidious.jing.rocks'
-  ];
-  for (const instance of invidiousInstances) {
-    try {
-      const invUrl = `${instance}/api/v1/search?q=${encodeURIComponent(`${cleanTitle} ${cleanArtist}`)}&type=video`;
-      const invRes = await fetch(invUrl, {
-        headers: { "User-Agent": "SoundPulse/1.0" },
-        signal: AbortSignal.timeout(2500)
-      });
-      if (invRes.ok) {
-        const invData = await invRes.json();
-        if (Array.isArray(invData) && invData.length > 0) {
-          const firstValid = invData.find((item: any) => item.videoId && item.videoId !== excludeId && (item.lengthSeconds ? item.lengthSeconds >= 40 && item.lengthSeconds <= 900 : true));
-          if (firstValid) {
-            const resObj = {
-              youtubeId: firstValid.videoId,
-              duration: firstValid.lengthSeconds || 210,
-              candidateIds: invData.map((i: any) => i.videoId).filter(Boolean)
-            };
-            videoIdCache.set(cacheKey, { result: resObj, timestamp: Date.now() });
-            return resObj;
-          }
-        }
-      }
-    } catch {}
-  }
-
-  // 3. Gemini AI Intelligent Video ID Resolution
-  try {
-    const aiPrompt = `Identify the exact official YouTube video ID for the song "${cleanTitle}" by artist "${cleanArtist}".
-Return ONLY a JSON object:
-{
-  "youtubeId": "exact 11-char YouTube video ID (or the most famous official video ID for this song)",
-  "duration": song duration in seconds (e.g. 210)
-}`;
-    const aiSchema = {
-      type: Type.OBJECT,
-      properties: {
-        youtubeId: { type: Type.STRING },
-        duration: { type: Type.NUMBER }
-      },
-      required: ["youtubeId", "duration"]
-    };
-
-    const aiRes = await generateJsonWithGemini<{ youtubeId: string; duration: number }>(aiPrompt, aiSchema);
-    if (aiRes && aiRes.youtubeId && aiRes.youtubeId.length === 11 && aiRes.youtubeId !== excludeId) {
-      const resObj = {
-        youtubeId: aiRes.youtubeId,
-        duration: aiRes.duration || 210,
-        candidateIds: [aiRes.youtubeId]
-      };
-      videoIdCache.set(cacheKey, { result: resObj, timestamp: Date.now() });
-      return resObj;
-    }
-  } catch (aiErr) {
-    console.warn("Gemini video lookup note:", aiErr);
-  }
-
+  videoIdCache.set(cacheKey, { result: null, timestamp: Date.now() });
   return null;
 }
 
