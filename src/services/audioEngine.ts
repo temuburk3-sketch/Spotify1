@@ -169,25 +169,27 @@ class AudioEngine {
     this.audio.addEventListener('ended', () => {
       if (this.activeMode !== 'html5') return;
 
-      // If the HTML5 audio element was playing a short 30-second preview, but the track is a full song (duration > 40s):
-      // Do NOT suddenly skip to the next track!
       const currentAudioDuration = this.audio.duration || 0;
       const expectedTrackDuration = this.currentTrack?.duration || 180;
-      const isShortPreview = currentAudioDuration > 0 && currentAudioDuration <= 35 && expectedTrackDuration > 45 && this.currentTrack?.source !== 'local';
+      const isShortPreview = currentAudioDuration > 0 && currentAudioDuration <= 40 && expectedTrackDuration > 45 && this.currentTrack?.source !== 'local';
 
       if (isShortPreview && this.currentTrack) {
-        // Attempt resolving full YouTube audio stream
-        if (!this.currentTrack.youtubeId) {
-          fetch(`/api/audio/full-source?title=${encodeURIComponent(this.currentTrack.title)}&artist=${encodeURIComponent(this.currentTrack.artist)}`)
-            .then(r => r.json())
-            .then(data => {
-              if (data.youtubeId && this.currentTrack) {
-                this.currentTrack.youtubeId = data.youtubeId;
-                this.playViaYouTube(data.youtubeId, 30);
-              }
-            })
-            .catch(() => {});
-        }
+        // Automatically switch to full song via YouTube so user NEVER gets cut off!
+        fetch(`/api/audio/full-source?title=${encodeURIComponent(this.currentTrack.title)}&artist=${encodeURIComponent(this.currentTrack.artist)}`)
+          .then(r => r.json())
+          .then(data => {
+            if (data.youtubeId && this.currentTrack) {
+              this.currentTrack.youtubeId = data.youtubeId;
+              this.playViaYouTube(data.youtubeId, Math.floor(currentAudioDuration));
+            } else if (this.currentTrack) {
+              this.playViaYouTubeSearch(`${this.currentTrack.title} ${this.currentTrack.artist}`, Math.floor(currentAudioDuration));
+            }
+          })
+          .catch(() => {
+            if (this.currentTrack) {
+              this.playViaYouTubeSearch(`${this.currentTrack.title} ${this.currentTrack.artist}`, Math.floor(currentAudioDuration));
+            }
+          });
         return;
       }
 
@@ -633,7 +635,7 @@ class AudioEngine {
       return this.playViaHtml5(track, effectiveStart);
     }
 
-    // 4. Resolve official full YouTube source first to prevent preview clip interruption
+    // 4. Resolve official full YouTube source first to guarantee full song playback
     try {
       if (this.ytPlayer && this.ytPlayerReady) {
         try { this.ytPlayer.pauseVideo(); } catch {}
@@ -655,8 +657,8 @@ class AudioEngine {
       console.warn('Full track resolve note:', e);
     }
 
-    // 5. Fallback HTML5 stream if YouTube stream is unreachable
-    return this.playViaHtml5(track, effectiveStart);
+    // 5. If specific video ID was not returned, use YouTube search playback engine directly
+    return this.playViaYouTubeSearch(`${track.title} ${track.artist}`, effectiveStart);
   }
 
   private async playViaYouTube(youtubeId: string, startTime = 0): Promise<void> {
@@ -665,7 +667,7 @@ class AudioEngine {
 
     await this.initYouTube();
 
-    if (this.ytPlayer && this.ytPlayer.loadVideoById) {
+    if (this.ytPlayer && typeof this.ytPlayer.loadVideoById === 'function') {
       try {
         const startSecs = Math.max(0, startTime);
         this.ytPlayer.loadVideoById({
@@ -673,6 +675,8 @@ class AudioEngine {
           startSeconds: startSecs
         });
         this.applyInternalVolume(this.currentEffectiveVolume);
+        try { this.ytPlayer.unMute(); } catch {}
+        try { this.ytPlayer.setVolume(Math.round(this.currentEffectiveVolume * 100)); } catch {}
         this.ytPlayer.playVideo();
         this.startYtInterval();
         this.acquireWakeLock().catch(() => {});
@@ -687,7 +691,44 @@ class AudioEngine {
       }
     }
 
-    // If YT failed to initialize, fallback to HTML5
+    // If YT load failed, try search playback
+    if (this.currentTrack) {
+      return this.playViaYouTubeSearch(`${this.currentTrack.title} ${this.currentTrack.artist}`, startTime);
+    }
+  }
+
+  private async playViaYouTubeSearch(query: string, startTime = 0): Promise<void> {
+    this.activeMode = 'youtube';
+    this.audio.pause();
+
+    await this.initYouTube();
+
+    if (this.ytPlayer && typeof this.ytPlayer.loadPlaylist === 'function') {
+      try {
+        this.ytPlayer.loadPlaylist({
+          listType: 'search',
+          list: query,
+          index: 0,
+          startSeconds: Math.max(0, startTime)
+        });
+        this.applyInternalVolume(this.currentEffectiveVolume);
+        try { this.ytPlayer.unMute(); } catch {}
+        try { this.ytPlayer.setVolume(Math.round(this.currentEffectiveVolume * 100)); } catch {}
+        this.ytPlayer.playVideo();
+        this.startYtInterval();
+        this.acquireWakeLock().catch(() => {});
+        this.silentAudio?.play().catch(() => {});
+        this.updateMediaSessionState('playing');
+        if (this.onPlayStateChangeCallback) {
+          this.onPlayStateChangeCallback(true);
+        }
+        return;
+      } catch (e) {
+        console.warn('Failed to load YT search playlist:', e);
+      }
+    }
+
+    // As last resort, HTML5 fallback
     if (this.currentTrack) {
       return this.playViaHtml5(this.currentTrack, startTime);
     }
