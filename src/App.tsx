@@ -55,7 +55,9 @@ import {
   detectTrackTheme,
   getSmartShuffleEnabled,
   setSmartShuffleEnabled,
-  fetchThematicSongRadio
+  fetchThematicSongRadio,
+  getSpotifySmartShuffleTrack,
+  getBalancedShuffleQueue
 } from './services/recommendationService';
 import { collabManager } from './services/collaboration';
 import {
@@ -137,7 +139,9 @@ export default function App() {
     vocalRemover: false,
     volumeNormalization: false,
     highQualityAudio: true,
-    slowedReverb: false
+    slowedReverb: false,
+    batterySaverMode: false,
+    keepScreenAwake: false
   });
 
   // PWA Install State
@@ -372,10 +376,32 @@ export default function App() {
 
     if (currentList.length === 0 && !currentTrack) return;
 
-    if (shuffleMode === 'smart' || shuffleMode === 'random') {
+    if (shuffleMode === 'smart' && currentTrack) {
+      // Spotify Smart Shuffle Mode: Mix playlist tracks acoustically & inject matching discoveries
+      const shouldInjectDiscovery = Math.random() < 0.35;
+      if (shouldInjectDiscovery) {
+        try {
+          const smartDiscovery = await getSpotifySmartShuffleTrack(currentTrack, currentList, playedTrackIds);
+          if (smartDiscovery) {
+            handlePlayTrack(smartDiscovery, [...currentList, smartDiscovery], playbackContext.title);
+            showToast(`✨ Akıllı Karışık: "${smartDiscovery.title}" (${smartDiscovery.artist})`);
+            return;
+          }
+        } catch {}
+      }
+
+      // Thematic seamless next song within playlist
+      const nextThematic = selectSmartThematicNextTrack(currentTrack, currentList, playedTrackIds);
+      if (nextThematic) {
+        handlePlayTrack(nextThematic, currentList, playbackContext.title);
+        return;
+      }
+    } else if (shuffleMode === 'random' && currentList.length > 0) {
+      // Balanced dispersion shuffle (prevents same artist clumping)
       const remaining = currentList.filter(t => !playedTrackIds.has(t.id));
       const pool = remaining.length > 0 ? remaining : currentList;
-      const next = pool[Math.floor(Math.random() * pool.length)];
+      const balancedPool = getBalancedShuffleQueue(pool, currentTrack?.id);
+      const next = balancedPool[0] || pool[Math.floor(Math.random() * pool.length)];
       if (next) {
         handlePlayTrack(next, currentList, playbackContext.title);
         return;

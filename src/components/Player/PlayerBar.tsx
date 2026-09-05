@@ -142,7 +142,13 @@ export const PlayerBar: React.FC<PlayerBarProps> = memo(({
                   <div className="text-xs sm:text-sm font-extrabold text-white truncate hover:text-emerald-400 transition">
                     {currentTrack.title}
                   </div>
-                  {isRadioActive && (
+                  {currentTrack.isSmartRecommendation && (
+                    <span className="shrink-0 px-1.5 py-0.2 rounded text-[8px] sm:text-[9px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-0.5">
+                      <Sparkles className="w-2.5 h-2.5 text-emerald-400" />
+                      <span>{currentTrack.matchScore ? `%${currentTrack.matchScore}` : 'Öneri'}</span>
+                    </span>
+                  )}
+                  {isRadioActive && !currentTrack.isSmartRecommendation && (
                     <span className="shrink-0 px-1 py-0.2 rounded text-[8px] sm:text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
                       Radyo
                     </span>

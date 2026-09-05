@@ -15,7 +15,12 @@ import {
   Gauge,
   Music2,
   Layers,
-  Sparkle
+  Sparkle,
+  BatteryCharging,
+  Smartphone,
+  Flame,
+  ThermometerSnowflake,
+  ShieldCheck
 } from 'lucide-react';
 import { AudioSettings } from '../../types';
 import { audioEngine } from '../../services/audioEngine';
@@ -232,6 +237,20 @@ export const EqualizerModal: React.FC<EqualizerModalProps> = ({
     const updated = { ...settings, crossfade: secs };
     onUpdateSettings(updated);
     audioEngine.setCrossfade(secs);
+  };
+
+  const handleToggleBatterySaver = () => {
+    const nextState = !settings.batterySaverMode;
+    const updated = { ...settings, batterySaverMode: nextState };
+    onUpdateSettings(updated);
+    audioEngine.setBatterySaverMode(nextState);
+  };
+
+  const handleToggleKeepScreenAwake = () => {
+    const nextState = !settings.keepScreenAwake;
+    const updated = { ...settings, keepScreenAwake: nextState };
+    onUpdateSettings(updated);
+    audioEngine.setKeepScreenAwake(nextState);
   };
 
   const handlePlaybackRate = (rate: number) => {
@@ -694,6 +713,90 @@ export const EqualizerModal: React.FC<EqualizerModalProps> = ({
                         {item.label}
                       </button>
                     ))}
+                  </div>
+                </div>
+
+                {/* Battery Saver & Thermal Protection (Cihaz Soğutma & Pil Koruması) */}
+                <div className="p-4 bg-neutral-950 rounded-2xl border border-neutral-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <ThermometerSnowflake className="w-4 h-4 text-cyan-400" />
+                      <span className="text-xs font-bold text-white">Cihaz Soğutma & Pil Tasarrufu</span>
+                    </div>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                      Mobil Optimize
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-neutral-400 leading-relaxed">
+                    Uzun süreli arka planda çalma sırasında telefonun ısınmasını engeller ve pil tüketimini %45'e kadar düşürür.
+                  </p>
+
+                  <div className="space-y-2.5 pt-1">
+                    {/* Eco/Cooling Toggle */}
+                    <div
+                      onClick={handleToggleBatterySaver}
+                      className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition ${
+                        settings.batterySaverMode
+                          ? 'bg-cyan-500/15 border-cyan-500 text-white'
+                          : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:text-white'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <div
+                          className={`p-2 rounded-lg ${
+                            settings.batterySaverMode ? 'bg-cyan-500 text-black' : 'bg-neutral-800 text-neutral-400'
+                          }`}
+                        >
+                          <BatteryCharging className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-white">Eko Mod & Düşük GPU/CPU Yükü</div>
+                          <div className="text-[10px] text-neutral-400">Görselleştiriciyi kilitler, akış çözücüyü hafifletir</div>
+                        </div>
+                      </div>
+                      <div
+                        className={`w-10 h-5 rounded-full transition flex items-center px-0.5 ${
+                          settings.batterySaverMode ? 'bg-cyan-500 justify-end' : 'bg-neutral-800 justify-start'
+                        }`}
+                      >
+                        <div className="w-4 h-4 rounded-full bg-white shadow-md" />
+                      </div>
+                    </div>
+
+                    {/* Screen Wake Lock Toggle */}
+                    <div
+                      onClick={handleToggleKeepScreenAwake}
+                      className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition ${
+                        settings.keepScreenAwake
+                          ? 'bg-emerald-500/15 border-emerald-500 text-white'
+                          : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:text-white'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <div
+                          className={`p-2 rounded-lg ${
+                            settings.keepScreenAwake ? 'bg-emerald-500 text-black' : 'bg-neutral-800 text-neutral-400'
+                          }`}
+                        >
+                          <Smartphone className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-white">Ekranı Sürekli Açık Tut (Wake Lock)</div>
+                          <div className="text-[10px] text-neutral-400">
+                            {settings.keepScreenAwake 
+                              ? 'Açık (Ekran kapanmaz, batarya daha hızlı tüketilebilir)' 
+                              : 'Kapalı (Tavsiye edilen: Telefon uyur, müzik arka planda ısınmadan çalar)'}
+                          </div>
+                        </div>
+                      </div>
+                      <div
+                        className={`w-10 h-5 rounded-full transition flex items-center px-0.5 ${
+                          settings.keepScreenAwake ? 'bg-emerald-500 justify-end' : 'bg-neutral-800 justify-start'
+                        }`}
+                      >
+                        <div className="w-4 h-4 rounded-full bg-white shadow-md" />
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>

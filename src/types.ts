@@ -28,6 +28,8 @@ export interface Track {
   genre?: string;
   recommendationReason?: string;
   matchScore?: number;
+  isSmartRecommendation?: boolean;
+  smartRecommendationSeed?: string;
 }
 
 export interface ListeningHistoryItem {
@@ -146,6 +148,8 @@ export interface AudioSettings {
   volumeNormalization: boolean; // ReplayGain Dynamics Compressor
   highQualityAudio: boolean; // 320kbps HD Audio preference
   slowedReverb: boolean; // Lo-fi Slowed & Reverb effect
+  batterySaverMode: boolean; // Device cooling & power optimization (reduces GPU/CPU decoding heat)
+  keepScreenAwake: boolean; // Screen wake lock - default false so device stays cool & screen sleeps normally
 }
 
 export type RepeatMode = 'off' | 'all' | 'one';

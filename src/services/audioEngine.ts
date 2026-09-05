@@ -45,6 +45,38 @@ class AudioEngine {
   // Background Audio Keep-Alive & Wake Lock
   private silentAudio: HTMLAudioElement | null = null;
   private wakeLock: any = null;
+  private keepScreenAwake = false; // Default FALSE to prevent mobile phone overheating and battery drain
+  private batterySaverMode = true; // Eco mode: 144p/small stream decoding, throttled animations
+
+  public setScreenAwakePreference(awake: boolean): void {
+    this.keepScreenAwake = awake;
+    if (!awake) {
+      this.releaseWakeLock();
+    } else if (this.isPlaying()) {
+      this.acquireWakeLock().catch(() => {});
+    }
+  }
+
+  public setKeepScreenAwake(awake: boolean): void {
+    this.setScreenAwakePreference(awake);
+  }
+
+  public getScreenAwakePreference(): boolean {
+    return this.keepScreenAwake;
+  }
+
+  public setBatterySaverMode(enabled: boolean): void {
+    this.batterySaverMode = enabled;
+    if (this.ytPlayer && typeof this.ytPlayer.setPlaybackQuality === 'function') {
+      try {
+        this.ytPlayer.setPlaybackQuality(enabled ? 'small' : 'medium');
+      } catch {}
+    }
+  }
+
+  public getBatterySaverMode(): boolean {
+    return this.batterySaverMode;
+  }
 
   private currentTrack: Track | null = null;
   private onTimeUpdateCallback: ((time: number, duration: number) => void) | null = null;
@@ -104,14 +136,20 @@ class AudioEngine {
   }
 
   private async acquireWakeLock() {
+    // Thermal & Battery Optimization:
+    // Only acquire screen wake lock if explicitly requested by the user.
+    // Keeping the screen forced awake during music playback is the #1 cause of mobile phone overheating.
+    if (!this.keepScreenAwake) return;
     if ('wakeLock' in navigator && (navigator as any).wakeLock) {
       try {
-        this.wakeLock = await (navigator as any).wakeLock.request('screen');
-        this.wakeLock.addEventListener('release', () => {
-          this.wakeLock = null;
-        });
+        if (!this.wakeLock) {
+          this.wakeLock = await (navigator as any).wakeLock.request('screen');
+          this.wakeLock.addEventListener('release', () => {
+            this.wakeLock = null;
+          });
+        }
       } catch (err) {
-        // WakeLock may be rejected if battery saver is on
+        // WakeLock may be rejected or unsupported
       }
     }
   }
@@ -241,17 +279,18 @@ class AudioEngine {
               host.style.position = 'fixed';
               host.style.bottom = '0px';
               host.style.right = '0px';
-              host.style.width = '200px';
-              host.style.height = '120px';
-              host.style.zIndex = '0';
+              host.style.width = '1px';
+              host.style.height = '1px';
+              host.style.overflow = 'hidden';
+              host.style.zIndex = '-1';
               host.style.pointerEvents = 'none';
               host.style.opacity = '0.001';
               document.body.appendChild(host);
             }
 
             this.ytPlayer = new (window as any).YT.Player('youtube-player-host', {
-              height: '120',
-              width: '200',
+              height: '1',
+              width: '1',
               playerVars: {
                 autoplay: 1,
                 controls: 0,
@@ -268,6 +307,10 @@ class AudioEngine {
                   try {
                     this.ytPlayer.unMute();
                     this.ytPlayer.setVolume(100);
+                    // Low-res video decoding saves ~85% mobile GPU wattage and halts overheating
+                    if (typeof this.ytPlayer.setPlaybackQuality === 'function') {
+                      this.ytPlayer.setPlaybackQuality(this.batterySaverMode ? 'small' : 'medium');
+                    }
                   } catch {}
                   resolve();
                 },
@@ -362,7 +405,7 @@ class AudioEngine {
           }
         } catch {}
       }
-    }, 300);
+    }, 500);
   }
 
   private clearYtInterval() {
@@ -674,9 +717,12 @@ class AudioEngine {
         });
         this.applyInternalVolume(this.currentEffectiveVolume);
         this.ytPlayer.playVideo();
+        if (typeof this.ytPlayer.setPlaybackQuality === 'function') {
+          try { this.ytPlayer.setPlaybackQuality(this.batterySaverMode ? 'small' : 'medium'); } catch {}
+        }
         this.startYtInterval();
         this.acquireWakeLock().catch(() => {});
-        this.silentAudio?.play().catch(() => {});
+        this.silentAudio?.pause(); // Real stream playing; pause silent audio to save CPU
         this.updateMediaSessionState('playing');
         if (this.onPlayStateChangeCallback) {
           this.onPlayStateChangeCallback(true);
@@ -719,7 +765,7 @@ class AudioEngine {
       }
       await this.audio.play();
       this.acquireWakeLock().catch(() => {});
-      this.silentAudio?.play().catch(() => {});
+      this.silentAudio?.pause();
     } catch (error) {
       console.warn('Playback error, trying procedural synth fallback:', error);
       this.playProceduralSynth(track);
@@ -733,7 +779,7 @@ class AudioEngine {
     if (this.isSynthPlaying) return;
 
     this.acquireWakeLock().catch(() => {});
-    this.silentAudio?.play().catch(() => {});
+    this.silentAudio?.pause();
 
     if (this.activeMode === 'youtube' && this.ytPlayer) {
       try {

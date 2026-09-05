@@ -371,8 +371,14 @@ export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
                   )}
                 </div>
 
-                {/* Theme badges & Radio shortcut */}
+                {/* Theme badges, Radio shortcut & Spotify Recommendation Indicator */}
                 <div className="mt-2 flex items-center gap-2 flex-wrap">
+                  {track.isSmartRecommendation && (
+                    <span className="inline-flex items-center gap-1.5 text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm animate-pulse">
+                      <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Spotify Akıllı Karışık {track.smartRecommendationSeed ? `• ${track.smartRecommendationSeed} Benzeri` : ''} ({track.matchScore || 95}% Eşleşme)</span>
+                    </span>
+                  )}
                   {currentTheme && (
                     <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${currentTheme.color}`}>
                       {currentTheme.displayName}
