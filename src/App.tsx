@@ -108,12 +108,21 @@ export default function App() {
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('off');
   const [shuffleMode, setShuffleMode] = useState<ShuffleMode>(() => getSmartShuffleEnabled() ? 'smart' : 'off');
   const [isRadioActive, setIsRadioActive] = useState<boolean>(false);
+  const isRadioActiveRef = useRef<boolean>(false);
+  isRadioActiveRef.current = isRadioActive;
+
   const [radioThemeName, setRadioThemeName] = useState<string>('');
   const [radioSeedTrack, setRadioSeedTrack] = useState<Track | null>(null);
   const radioSeedRef = useRef<Track | null>(null);
   const isRadioFetchingRef = useRef<boolean>(false);
   const [playedTrackIds, setPlayedTrackIds] = useState<Set<string>>(new Set());
+  const playedTrackIdsRef = useRef<Set<string>>(playedTrackIds);
+  playedTrackIdsRef.current = playedTrackIds;
+
   const [queue, setQueue] = useState<Track[]>([]);
+  const queueRef = useRef<Track[]>(queue);
+  queueRef.current = queue;
+
   const [playbackContext, setPlaybackContext] = useState<{
     type: 'playlist' | 'search' | 'recommendations' | 'radio' | 'custom';
     title?: string;
@@ -123,6 +132,8 @@ export default function App() {
     title: 'Çalma Listesi',
     tracks: []
   });
+  const playbackContextRef = useRef(playbackContext);
+  playbackContextRef.current = playbackContext;
   const [isABActive, setIsABActive] = useState<boolean>(false);
   const [sleepTimerMins, setSleepTimerMins] = useState<number | null>(null);
   const [isOfflineMode, setIsOfflineMode] = useState<boolean>(false);
@@ -372,37 +383,45 @@ export default function App() {
     // ----------------------------------------------------
     // 1. ENDLESS SONG RADIO CONTINUITY (Never de-themes or stalls)
     // ----------------------------------------------------
-    if (isRadioActive) {
+    const isRadio = isRadioActiveRef.current || isRadioActive;
+    if (isRadio) {
       const seed = radioSeedRef.current || radioSeedTrack || currentTrack;
-      const radioTitle = playbackContext.title || `📻 ${seed?.artist || seed?.title || 'Şarkı'} Radyosu`;
+      const radioTitle = playbackContextRef.current.title || `📻 ${seed?.artist || seed?.title || 'Şarkı'} Radyosu`;
 
       // A. If tracks exist in the radio queue, consume the next track
-      if (queue.length > 0) {
-        const nextTrack = queue[0];
-        setQueue(prev => prev.slice(1));
-        const fullRadioTracks = playbackContext.tracks.some(t => t.id === nextTrack.id)
-          ? playbackContext.tracks
-          : [...playbackContext.tracks, nextTrack];
+      const activeQueue = queueRef.current.length > 0 ? queueRef.current : queue;
+      if (activeQueue.length > 0) {
+        const nextTrack = activeQueue[0];
+        const remainingQueue = activeQueue.slice(1);
+        queueRef.current = remainingQueue;
+        setQueue(remainingQueue);
+
+        const currentContextTracks = playbackContextRef.current.tracks;
+        const fullRadioTracks = currentContextTracks.some(t => t.id === nextTrack.id)
+          ? currentContextTracks
+          : [...currentContextTracks, nextTrack];
         handlePlayTrack(nextTrack, fullRadioTracks, radioTitle);
 
         // Proactive replenishment: when 4 or fewer songs remain, prefetch seamlessly in background
-        if (queue.length <= 4 && seed && !isRadioFetchingRef.current) {
+        if (remainingQueue.length <= 4 && seed && !isRadioFetchingRef.current) {
           isRadioFetchingRef.current = true;
-          fetchThematicSongRadio(seed, 15, Array.from(playedTrackIds))
+          fetchThematicSongRadio(seed, 15, Array.from(playedTrackIdsRef.current))
             .then(res => {
               isRadioFetchingRef.current = false;
               if (res && Array.isArray(res.tracks) && res.tracks.length > 0) {
-                setQueue(prev => {
-                  const existingIds = new Set([...prev.map(t => t.id), nextTrack.id]);
-                  const fresh = res.tracks.filter(t => !existingIds.has(t.id) && !playedTrackIds.has(t.id));
-                  return [...prev, ...fresh];
-                });
+                const currentQueueSnapshot = queueRef.current;
+                const existingIds = new Set([...currentQueueSnapshot.map(t => t.id), nextTrack.id]);
+                const fresh = res.tracks.filter(t => !existingIds.has(t.id) && !playedTrackIdsRef.current.has(t.id));
+                const updatedQueue = [...currentQueueSnapshot, ...fresh];
+                queueRef.current = updatedQueue;
+                setQueue(updatedQueue);
+
                 setPlaybackContext(prev => {
-                  const existingIds = new Set(prev.tracks.map(t => t.id));
-                  const fresh = res.tracks.filter(t => !existingIds.has(t.id));
+                  const existingContextIds = new Set(prev.tracks.map(t => t.id));
+                  const freshForContext = res.tracks.filter(t => !existingContextIds.has(t.id));
                   return {
                     ...prev,
-                    tracks: [...prev.tracks, ...fresh]
+                    tracks: [...prev.tracks, ...freshForContext]
                   };
                 });
               }
@@ -418,12 +437,13 @@ export default function App() {
       if (seed) {
         isRadioFetchingRef.current = true;
         try {
-          const res = await fetchThematicSongRadio(seed, 15, Array.from(playedTrackIds));
+          const res = await fetchThematicSongRadio(seed, 15, Array.from(playedTrackIdsRef.current));
           isRadioFetchingRef.current = false;
           if (res && Array.isArray(res.tracks) && res.tracks.length > 0) {
             const [first, ...rest] = res.tracks;
+            queueRef.current = rest;
             setQueue(rest);
-            const fullRadioTracks = [...playbackContext.tracks, ...res.tracks];
+            const fullRadioTracks = [...playbackContextRef.current.tracks, ...res.tracks];
             handlePlayTrack(first, fullRadioTracks, radioTitle);
             return;
           }
@@ -433,14 +453,14 @@ export default function App() {
         }
 
         // Emergency fallback: Filter POPULAR_ORIGINAL_HITS strictly by seed's theme so it never plays a mismatch
-        const emergencyPool = POPULAR_ORIGINAL_HITS.filter(t => !playedTrackIds.has(t.id));
+        const emergencyPool = POPULAR_ORIGINAL_HITS.filter(t => !playedTrackIdsRef.current.has(t.id));
         const emergencyTrack = selectSmartThematicNextTrack(
           seed,
           emergencyPool.length > 0 ? emergencyPool : POPULAR_ORIGINAL_HITS,
-          playedTrackIds
+          playedTrackIdsRef.current
         );
         if (emergencyTrack) {
-          handlePlayTrack(emergencyTrack, [...playbackContext.tracks, emergencyTrack], radioTitle);
+          handlePlayTrack(emergencyTrack, [...playbackContextRef.current.tracks, emergencyTrack], radioTitle);
           return;
         }
       }
@@ -590,6 +610,7 @@ export default function App() {
     radioSeedRef.current = track;
     setRadioThemeName(theme.displayName);
     setQueue([]);
+    queueRef.current = [];
     handlePlayTrack(track, [track], `📻 ${track.artist || track.title} Radyosu`);
     showToast(`📻 "${track.title}" Radyosu Başlatıldı...`);
 
@@ -598,6 +619,7 @@ export default function App() {
       const res = await fetchThematicSongRadio(track, 15, [track.id, track.title]);
       isRadioFetchingRef.current = false;
       if (res && Array.isArray(res.tracks) && res.tracks.length > 0) {
+        queueRef.current = res.tracks;
         setQueue(res.tracks);
         setPlaybackContext({
           type: 'radio',

@@ -276,7 +276,7 @@ async function searchItunesSong(title: string, artist: string) {
   try {
     const cleanTitle = title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
     const term = `${cleanTitle} ${artist}`.trim();
-    const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(term)}&entity=song&limit=3`;
+    const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(term)}&country=TR&entity=song&limit=3`;
     const res = await fetch(itunesUrl, {
       headers: { "User-Agent": "SoundPulse/1.0" }
     });
@@ -2094,14 +2094,30 @@ app.get("/api/audio/full-source", async (req, res) => {
 });
 
 // Smart Song Radio API (Strict Theme & Genre-matching endless track stream)
-app.post("/api/radio/track", async (req, res) => {
+app.all("/api/radio/track", async (req, res) => {
   try {
-    const { title = "", artist = "", genre = "", count = 10, excludeTitles = [], excludeIds = [] } = req.body;
-    const requestedCount = Math.min(Math.max(Number(count) || 10, 4), 20);
+    const dataSrc = req.method === "POST" ? (req.body || {}) : (req.query || {});
+    const {
+      title = "",
+      artist = "",
+      genre = "",
+      count = 12,
+      excludeTitles = [],
+      excludeIds = []
+    } = dataSrc;
+
+    const requestedCount = Math.min(Math.max(Number(count) || 12, 4), 20);
+    const parsedExcludeTitles = Array.isArray(excludeTitles)
+      ? excludeTitles
+      : (typeof excludeTitles === "string" ? excludeTitles.split(",") : []);
+    const parsedExcludeIds = Array.isArray(excludeIds)
+      ? excludeIds
+      : (typeof excludeIds === "string" ? excludeIds.split(",") : []);
+
     const excludeSet = new Set<string>([
-      ...((Array.isArray(excludeTitles) ? excludeTitles : []) as string[]).map((t: string) => String(t).toLowerCase().trim()),
-      ...((Array.isArray(excludeIds) ? excludeIds : []) as string[]).map((id: string) => String(id).toLowerCase().trim()),
-      title.toLowerCase().trim()
+      ...parsedExcludeTitles.map((t: string) => String(t).toLowerCase().trim()),
+      ...parsedExcludeIds.map((id: string) => String(id).toLowerCase().trim()),
+      String(title).toLowerCase().trim()
     ]);
 
     const hasExclusions = excludeSet.size > 1;
@@ -2386,12 +2402,13 @@ Provide a valid JSON array where each object has:
             if (itunesMatch.previewUrl) audioUrl = itunesMatch.previewUrl;
             if (itunesMatch.duration) duration = itunesMatch.duration;
             if (itunesMatch.album) album = itunesMatch.album;
-          }
-
-          const ytMatch = await searchFullSongVideoId(rec.title, rec.artist);
-          if (ytMatch && ytMatch.youtubeId) {
-            youtubeId = ytMatch.youtubeId;
-            if (ytMatch.duration) duration = ytMatch.duration;
+          } else {
+            const audiusMatch = await searchAudiusSong(rec.title, rec.artist);
+            if (audiusMatch && audiusMatch.audioUrl) {
+              audioUrl = audiusMatch.audioUrl;
+              if (audiusMatch.coverUrl) coverUrl = audiusMatch.coverUrl;
+              if (audiusMatch.duration) duration = audiusMatch.duration;
+            }
           }
         } catch (enrichErr) {
           console.warn("Song radio track enrichment warning:", rec.title, enrichErr);
