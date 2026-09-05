@@ -56,9 +56,11 @@ import {
   getSmartShuffleEnabled,
   setSmartShuffleEnabled,
   fetchThematicSongRadio,
+  fetchEndlessRadioBatch,
   getSpotifySmartShuffleTrack,
   getBalancedShuffleQueue
 } from './services/recommendationService';
+import { POPULAR_ORIGINAL_HITS } from './data/popularOriginalTracks';
 import { collabManager } from './services/collaboration';
 import {
   FolderOpen,
@@ -107,6 +109,9 @@ export default function App() {
   const [shuffleMode, setShuffleMode] = useState<ShuffleMode>(() => getSmartShuffleEnabled() ? 'smart' : 'off');
   const [isRadioActive, setIsRadioActive] = useState<boolean>(false);
   const [radioThemeName, setRadioThemeName] = useState<string>('');
+  const [radioSeedTrack, setRadioSeedTrack] = useState<Track | null>(null);
+  const radioSeedRef = useRef<Track | null>(null);
+  const isRadioFetchingRef = useRef<boolean>(false);
   const [playedTrackIds, setPlayedTrackIds] = useState<Set<string>>(new Set());
   const [queue, setQueue] = useState<Track[]>([]);
   const [playbackContext, setPlaybackContext] = useState<{
@@ -313,6 +318,14 @@ export default function App() {
   // Playback Control Handlers
   const handlePlayTrack = (track: Track, contextTracks?: Track[], contextName?: string) => {
     if (!track) return;
+
+    // If user clicked an explicit playlist track (and not a radio track), reset radio
+    if (contextName && !contextName.includes('Radyo') && isRadioActive && contextTracks && contextTracks.length > 1) {
+      setIsRadioActive(false);
+      setRadioSeedTrack(null);
+      radioSeedRef.current = null;
+    }
+
     prefetchLyricsForTrack(track);
     setCurrentTrack(track);
     setIsPlaying(true);
@@ -320,7 +333,7 @@ export default function App() {
 
     if (contextTracks && contextTracks.length > 0) {
       setPlaybackContext({
-        type: 'playlist',
+        type: contextName?.includes('Radyo') ? 'radio' : 'playlist',
         title: contextName || 'Çalma Listesi',
         tracks: contextTracks
       });
@@ -348,25 +361,90 @@ export default function App() {
     }
   };
 
+  const handleExitRadio = () => {
+    setIsRadioActive(false);
+    setRadioSeedTrack(null);
+    radioSeedRef.current = null;
+    showToast('📻 Şarkı radyosu sonlandırıldı');
+  };
+
   const handleNextTrack = async () => {
+    // ----------------------------------------------------
+    // 1. ENDLESS SONG RADIO CONTINUITY (Never de-themes or stalls)
+    // ----------------------------------------------------
+    if (isRadioActive) {
+      const seed = radioSeedRef.current || radioSeedTrack || currentTrack;
+      const radioTitle = playbackContext.title || `📻 ${seed?.artist || seed?.title || 'Şarkı'} Radyosu`;
+
+      // A. If tracks exist in the radio queue, consume the next track
+      if (queue.length > 0) {
+        const nextTrack = queue[0];
+        setQueue(prev => prev.slice(1));
+        handlePlayTrack(nextTrack, [nextTrack], radioTitle);
+
+        // Proactive replenishment: when 4 or fewer songs remain, prefetch seamlessly in background
+        if (queue.length <= 4 && seed && !isRadioFetchingRef.current) {
+          isRadioFetchingRef.current = true;
+          fetchEndlessRadioBatch(seed, Array.from(playedTrackIds), 12)
+            .then(fresh => {
+              isRadioFetchingRef.current = false;
+              if (fresh && fresh.length > 0) {
+                setQueue(prev => {
+                  const existingIds = new Set(prev.map(t => t.id));
+                  const toAdd = fresh.filter(t => !existingIds.has(t.id) && !playedTrackIds.has(t.id));
+                  return [...prev, ...toAdd];
+                });
+              }
+            })
+            .catch(() => {
+              isRadioFetchingRef.current = false;
+            });
+        }
+        return;
+      }
+
+      // B. Queue is empty (e.g. rapid skips or finished batch):
+      // Replenish immediately from API/Peer graph without switching to unrelated user playlists!
+      if (seed) {
+        showToast('📻 Kesintisiz radyo akışı devam ediyor...');
+        isRadioFetchingRef.current = true;
+        try {
+          const fresh = await fetchEndlessRadioBatch(seed, Array.from(playedTrackIds), 12);
+          isRadioFetchingRef.current = false;
+          if (fresh && fresh.length > 0) {
+            const [first, ...rest] = fresh;
+            setQueue(rest);
+            handlePlayTrack(first, [first, ...rest], radioTitle);
+            showToast(`📻 Radyo Akışı: "${first.title}" - ${first.artist}`);
+            return;
+          }
+        } catch (err) {
+          isRadioFetchingRef.current = false;
+          console.warn('Emergency radio refill error:', err);
+        }
+
+        // Emergency fallback: Filter POPULAR_ORIGINAL_HITS strictly by seed's theme so it never plays a mismatch
+        const emergencyPool = POPULAR_ORIGINAL_HITS.filter(t => !playedTrackIds.has(t.id));
+        const emergencyTrack = selectSmartThematicNextTrack(
+          seed,
+          emergencyPool.length > 0 ? emergencyPool : POPULAR_ORIGINAL_HITS,
+          playedTrackIds
+        );
+        if (emergencyTrack) {
+          handlePlayTrack(emergencyTrack, [emergencyTrack], radioTitle);
+          return;
+        }
+      }
+      return;
+    }
+
+    // ----------------------------------------------------
+    // 2. STANDARD QUEUE & PLAYLIST PLAYBACK
+    // ----------------------------------------------------
     if (queue.length > 0) {
       const nextTrack = queue[0];
       setQueue(prev => prev.slice(1));
       handlePlayTrack(nextTrack, playbackContext.tracks.length > 0 ? playbackContext.tracks : [nextTrack], playbackContext.title);
-
-      // If running low on radio queue, prefetch next batch of similar songs seamlessly
-      if (isRadioActive && queue.length <= 2 && nextTrack) {
-        fetchThematicSongRadio(nextTrack, 10, Array.from(playedTrackIds))
-          .then(res => {
-            if (res && Array.isArray(res.tracks)) {
-              const newTracks = res.tracks.filter(t => !playedTrackIds.has(t.id) && t.id !== nextTrack.id);
-              if (newTracks.length > 0) {
-                setQueue(prev => [...prev, ...newTracks]);
-              }
-            }
-          })
-          .catch(() => {});
-      }
       return;
     }
 
@@ -413,25 +491,13 @@ export default function App() {
       handlePlayTrack(currentList[currentIdx + 1], currentList, playbackContext.title);
     } else if (repeatMode === 'all' && currentList.length > 0) {
       handlePlayTrack(currentList[0], currentList, playbackContext.title);
-    } else if ((isRadioActive || getEndlessAutoplay()) && currentTrack) {
-      // Endless Radio / Autoplay mode: Find next matching song from current theme/genre
+    } else if (getEndlessAutoplay() && currentTrack) {
+      // Endless Autoplay mode when regular playlist finishes
       const allAppTracks = playlists.flatMap(p => p.tracks);
       const autoNext = selectSmartThematicNextTrack(currentTrack, allAppTracks, playedTrackIds);
       if (autoNext) {
-        handlePlayTrack(autoNext, allAppTracks, `📻 ${radioThemeName || 'Şarkı'} Radyosu`);
-        showToast(`✨ Radyo Akışı: "${autoNext.title}" - ${autoNext.artist}`);
-      } else {
-        // Fetch fresh radio recommendations on the fly
-        fetchThematicSongRadio(currentTrack, 8, Array.from(playedTrackIds))
-          .then(res => {
-            if (res && res.tracks && res.tracks.length > 0) {
-              const [first, ...rest] = res.tracks;
-              setQueue(rest);
-              handlePlayTrack(first, res.tracks, res.radioTitle);
-              showToast(`📻 Radyo Akışı: "${first.title}" - ${first.artist}`);
-            }
-          })
-          .catch(() => {});
+        handlePlayTrack(autoNext, allAppTracks, `📻 Otomatik Çalma`);
+        showToast(`✨ Otomatik Çalma: "${autoNext.title}" - ${autoNext.artist}`);
       }
     }
   };
@@ -511,12 +577,17 @@ export default function App() {
   const handleStartSongRadio = async (track: Track) => {
     const theme = detectTrackTheme(track);
     setIsRadioActive(true);
+    setRadioSeedTrack(track);
+    radioSeedRef.current = track;
     setRadioThemeName(theme.displayName);
+    setQueue([]);
     handlePlayTrack(track, [track], `📻 ${track.artist || track.title} Radyosu`);
     showToast(`📻 "${track.title}" Radyosu Başlatıldı...`);
 
+    isRadioFetchingRef.current = true;
     try {
-      const res = await fetchThematicSongRadio(track, 15);
+      const res = await fetchThematicSongRadio(track, 15, [track.id, track.title]);
+      isRadioFetchingRef.current = false;
       if (res && Array.isArray(res.tracks) && res.tracks.length > 0) {
         setQueue(res.tracks);
         setPlaybackContext({
@@ -527,6 +598,7 @@ export default function App() {
         showToast(`✨ ${res.tracks.length} benzer şarkı sıraya eklendi (${res.themeName})`);
       }
     } catch (err) {
+      isRadioFetchingRef.current = false;
       console.warn('Radio queue init note:', err);
     }
   };
@@ -1082,6 +1154,8 @@ export default function App() {
           shuffleMode={shuffleMode}
           isABActive={isABActive}
           isRadioActive={isRadioActive}
+          radioSeedTrack={radioSeedTrack}
+          onExitRadio={handleExitRadio}
           volume={audioSettings.volume}
           isMuted={audioSettings.muted}
           isOfflineMode={isOfflineMode}
@@ -1129,6 +1203,8 @@ export default function App() {
         shuffleMode={shuffleMode}
         isABActive={isABActive}
         isRadioActive={isRadioActive}
+        radioSeedTrack={radioSeedTrack}
+        onExitRadio={handleExitRadio}
         onTogglePlay={handleTogglePlay}
         onPrev={handlePrevTrack}
         onNext={handleNextTrack}

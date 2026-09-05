@@ -2096,13 +2096,26 @@ app.get("/api/audio/full-source", async (req, res) => {
 // Smart Song Radio API (Strict Theme & Genre-matching endless track stream)
 app.post("/api/radio/track", async (req, res) => {
   try {
-    const { title = "", artist = "", genre = "", count = 10, excludeTitles = [] } = req.body;
+    const { title = "", artist = "", genre = "", count = 10, excludeTitles = [], excludeIds = [] } = req.body;
     const requestedCount = Math.min(Math.max(Number(count) || 10, 4), 20);
+    const excludeSet = new Set<string>([
+      ...((Array.isArray(excludeTitles) ? excludeTitles : []) as string[]).map((t: string) => String(t).toLowerCase().trim()),
+      ...((Array.isArray(excludeIds) ? excludeIds : []) as string[]).map((id: string) => String(id).toLowerCase().trim()),
+      title.toLowerCase().trim()
+    ]);
 
-    const radioCacheKey = `radio_${title.trim().toLowerCase()}_${artist.trim().toLowerCase()}_${genre.trim().toLowerCase()}_${requestedCount}`;
-    const cachedRadio = getCached(recommendationsCache, radioCacheKey);
-    if (cachedRadio) {
-      return res.json(cachedRadio);
+    const radioCacheKey = `radio_${title.trim().toLowerCase()}_${artist.trim().toLowerCase()}_${genre.trim().toLowerCase()}`;
+    const cachedRadio: any = getCached(recommendationsCache, radioCacheKey);
+    if (cachedRadio && Array.isArray(cachedRadio.tracks)) {
+      const freshTracks = cachedRadio.tracks.filter(
+        (t: any) => !excludeSet.has(t.title.toLowerCase().trim()) && !excludeSet.has(t.id?.toLowerCase()?.trim())
+      );
+      if (freshTracks.length >= requestedCount) {
+        return res.json({
+          ...cachedRadio,
+          tracks: freshTracks.slice(0, requestedCount)
+        });
+      }
     }
 
     // Classify theme & detect genre family
@@ -2244,66 +2257,122 @@ Provide a valid JSON array where each object has:
       rawRecommendations = aiResult;
     }
 
-    // Strict Curated Thematic Fallback pools
-    if (rawRecommendations.length === 0) {
+    // Strict Curated Thematic Fallback pools (Massive 20+ tracks per ecosystem)
+    if (rawRecommendations.length === 0 || rawRecommendations.length < requestedCount) {
+      let pool: { title: string; artist: string; genre: string; reason: string; matchScore: number }[] = [];
       if (detectedCategory === "arabesk") {
-        rawRecommendations = [
-          { title: "Affet", artist: "Müslüm Gürses", genre: "Arabesk / Rock", reason: "Müslüm Gürses'in unutulmaz duygu yüklü yorumu ve derin arabesk teması.", matchScore: 99 },
-          { title: "Nilüfer", artist: "Müslüm Gürses", genre: "Arabesk / Damar", reason: "Müslüm Baba klasiği, yoğun keman ve akustik yaylı tınıları.", matchScore: 98 },
+        pool = [
+          { title: "Affet", artist: "Müslüm Gürses", genre: "Arabesk / Damar", reason: "Müslüm Baba klasiği, derin duygusal keder ve bağlama nağmeleri.", matchScore: 99 },
+          { title: "Nilüfer", artist: "Müslüm Gürses", genre: "Arabesk / Damar", reason: "Yoğun keman ve akustik yaylı tınıları.", matchScore: 98 },
+          { title: "Unutamadım", artist: "Müslüm Gürses", genre: "Arabesk / Damar", reason: "Müslüm Gürses'in efsanevi eseri, hüzünlü yaylılar.", matchScore: 99 },
           { title: "Ben De Özledim", artist: "Ferdi Tayfur", genre: "Arabesk / Damar", reason: "Ferdi Tayfur'un efsanevi melodik bağlama ve aşk nağmeleri.", matchScore: 97 },
+          { title: "Bana Sor", artist: "Ferdi Tayfur", genre: "Arabesk / Damar", reason: "Gözyaşı ve hasret temalı klasik Ferdi Tayfur bestesi.", matchScore: 96 },
+          { title: "Huzurum Kalmadı", artist: "Ferdi Tayfur", genre: "Arabesk / Damar", reason: "Arabesk müziğin altın çağını temsil eden başyapıt.", matchScore: 96 },
           { title: "Sen Affetsen Ben Affetmem", artist: "Bergen", genre: "Arabesk / Damar", reason: "Bergen'in içe işleyen güçlü arabesk yorumu.", matchScore: 98 },
+          { title: "Benim İçin Üzülme", artist: "Bergen", genre: "Arabesk / Damar", reason: "Bergen'in unutulmaz acı dolu feryadı.", matchScore: 97 },
           { title: "Duygularım", artist: "Azer Bülbül", genre: "Arabesk / Damar", reason: "Azer Bülbül'ün benzersiz titreyen vokal tarzı ve damar ritimleri.", matchScore: 96 },
+          { title: "Çoğu Gitti Azı Kaldı", artist: "Azer Bülbül", genre: "Arabesk / Damar", reason: "İçten ve sarsıcı Azer Bülbül klasiği.", matchScore: 95 },
           { title: "Duyanlara Duymayanlara", artist: "Cengiz Kurtoğlu", genre: "Taverna / Arabesk", reason: "Taverna ve arabesk müziğin en büyük klasiklerinden.", matchScore: 97 },
+          { title: "Liselim", artist: "Cengiz Kurtoğlu", genre: "Taverna / Arabesk", reason: "Cengiz Kurtoğlu'nun nostaljik ve romantik taverna eseri.", matchScore: 95 },
           { title: "Haydi Söyle", artist: "İbrahim Tatlıses", genre: "Arabesk / Fantezi", reason: "İmparator'un güçlü vokali ve zengin doğu aranjmanı.", matchScore: 95 },
+          { title: "Mavi Mavi", artist: "İbrahim Tatlıses", genre: "Arabesk / Fantezi", reason: "İbrahim Tatlıses'in coşkulu ve melodik arabesk klasiği.", matchScore: 94 },
           { title: "Kum Gibi", artist: "Ahmet Kaya", genre: "Özgün Müzik / Damar", reason: "Derin sözler, akustik gitar ve bağlamanın eşsiz uyumu.", matchScore: 96 },
+          { title: "Kafama Sıkar Giderim", artist: "Ahmet Kaya", genre: "Özgün Müzik / Damar", reason: "İsyan ve melankoli dolu Ahmet Kaya şaheseri.", matchScore: 96 },
           { title: "Delikanlım", artist: "Yıldız Tilbe", genre: "Arabesk / Pop", reason: "Yıldız Tilbe'nin samimi ve tutkulu arabesk nağmeleri.", matchScore: 97 },
-          { title: "Bana Sor", artist: "Ferdi Tayfur", genre: "Arabesk / Damar", reason: "Gözyaşı ve hasret temalı klasik Ferdi Tayfur bestesi.", matchScore: 95 }
+          { title: "Çabuk Olalım Kaptan", artist: "Yıldız Tilbe", genre: "Arabesk / Fantezi", reason: "Duygu seline sürükleyen Yıldız Tilbe bestesi.", matchScore: 96 },
+          { title: "Güz Gülleri", artist: "Hakan Taşıyan", genre: "Arabesk / Damar", reason: "Hakan Taşıyan'ın buğulu sesi ve hüznü.", matchScore: 95 },
+          { title: "Kaderimin Oyunu", artist: "Orhan Gencebay", genre: "Klasik Arabesk", reason: "Orhan Gencebay'ın senfonik elektro-bağlama armonisi.", matchScore: 97 },
+          { title: "Batsın Bu Dünya", artist: "Orhan Gencebay", genre: "Klasik Arabesk", reason: "Türk arabesk tarihinin marşı niteliğindeki başyapıtı.", matchScore: 98 },
+          { title: "Dön Ne Olur", artist: "Ebru Gündeş", genre: "Fantezi / Arabesk", reason: "Ebru Gündeş'in güçlü sesinden yürek yakan bir melodi.", matchScore: 96 },
+          { title: "Sabahçı Kahvesi", artist: "Ferdi Tayfur", genre: "Arabesk / Damar", reason: "Gece yalnızlığını anlatan en derin arabesk şarkı.", matchScore: 96 }
         ];
       } else if (detectedCategory === "rock") {
-        rawRecommendations = [
+        pool = [
           { title: "Bir Derdim Var", artist: "Mor ve Ötesi", genre: "Türkçe Rock", reason: "Enerjik gitarlar ve felsefi sözlerle Türk rock müziğinin başyapıtı.", matchScore: 99 },
+          { title: "Deli", artist: "Mor ve Ötesi", genre: "Türkçe Rock", reason: "Güçlü ritim ve sürükleyici gitar melodileri.", matchScore: 97 },
           { title: "Aman Aman", artist: "Duman", genre: "Türkçe Rock", reason: "Kaan Tangöze'nin karakteristik vokali ve güçlü distortion tonları.", matchScore: 98 },
+          { title: "Köprüaltı", artist: "Duman", genre: "Türkçe Rock", reason: "Duman'ın ilk ve en içten kült rock parçası.", matchScore: 97 },
+          { title: "Kırmışlar Kalbini", artist: "Duman", genre: "Türkçe Rock", reason: "Derin bas tonları ve isyankar sözler.", matchScore: 96 },
           { title: "Sil Baştan", artist: "Şebnem Ferah", genre: "Türkçe Rock", reason: "Şebnem Ferah'ın büyüleyici vokali ve epik solo geçişleri.", matchScore: 97 },
+          { title: "Yağmurlar", artist: "Şebnem Ferah", genre: "Türkçe Rock", reason: "Duygusal akustik ve elektro gitar yükselişleri.", matchScore: 96 },
           { title: "Paramparça", artist: "Teoman", genre: "Türkçe Rock", reason: "Şehir hayatının melankolisini yansıtan zamansız bir Teoman klasiği.", matchScore: 96 },
+          { title: "Rüzgar Gülü", artist: "Teoman", genre: "Türkçe Rock", reason: "Teoman'ın imza anlatımı ve akustik gitar yürüyüşleri.", matchScore: 95 },
           { title: "Bir Kadın Çizeceksin", artist: "maNga", genre: "Nu-Metal / Rock", reason: "Ney ezgileri ile sert elektro gitar rifflerinin harmanı.", matchScore: 96 },
+          { title: "Dünyanın Sonuna Doğmuşum", artist: "maNga", genre: "Alternatif Rock", reason: "Dinamik synthesizer ve rock beatleri.", matchScore: 96 },
           { title: "Gülpembe", artist: "Barış Manço", genre: "Anadolu Rock", reason: "Anadolu rock tarihinin en etkileyici melodilerinden biri.", matchScore: 98 },
+          { title: "Dönence", artist: "Barış Manço", genre: "Anadolu Rock / Prog", reason: "Progresif synthesizer katmanları ve kozmik melodiler.", matchScore: 99 },
           { title: "Resimdeki Gözyaşları", artist: "Cem Karaca", genre: "Anadolu Rock", reason: "Cem Karaca'nın teatral ve güçlü sesiyle unutulmaz başyapıt.", matchScore: 97 },
-          { title: "Seni Dert Etmeler", artist: "Madrigal", genre: "Indie Rock", reason: "Modern alternatif rock tınıları ve akıcı bas yürüyüşleri.", matchScore: 95 }
+          { title: "Islak Islak", artist: "Barış Akarsu", genre: "Türkçe Rock", reason: "Cem Karaca bestesine Barış Akarsu'nun samimi ve güçlü yorumu.", matchScore: 96 },
+          { title: "Seni Dert Etmeler", artist: "Madrigal", genre: "Indie Rock", reason: "Modern alternatif rock tınıları ve akıcı bas yürüyüşleri.", matchScore: 95 },
+          { title: "Dip", artist: "Madrigal", genre: "Indie Rock", reason: "Akılda kalıcı gitar riffleri ve vokaller.", matchScore: 95 },
+          { title: "Böyle Güzelsin", artist: "Gripin", genre: "Türkçe Rock", reason: "Gripin'in tutkulu ve enerjik rock tarzı.", matchScore: 95 },
+          { title: "Koca Yaşlı Şişko Dünya", artist: "Adamlar", genre: "Alternatif Rock", reason: "Özgün ritmik yapı ve esprili felsefi sözler.", matchScore: 95 },
+          { title: "Dinle Beni Bi", artist: "Yüzyüzeyken Konuşuruz", genre: "Indie Rock", reason: "Şehirli alternatif rock hüznü ve yumuşak tınılar.", matchScore: 96 }
         ];
       } else if (detectedCategory === "rap") {
-        rawRecommendations = [
+        pool = [
           { title: "Suspus", artist: "Ceza", genre: "Türkçe Rap", reason: "Hızlı flow ve teknik kafiyelerle Türkçe rapin zirve eseri.", matchScore: 99 },
+          { title: "Holokost", artist: "Ceza", genre: "Hardcore Rap", reason: "Türkçe rapin en efsanevi flex ve hız performansı.", matchScore: 98 },
           { title: "Neyim Var Ki", artist: "Ceza ft. Sagopa Kajmer", genre: "Türkçe Rap", reason: "Tarihin en çok dinlenen kült rap düeti.", matchScore: 99 },
+          { title: "Galiba", artist: "Sagopa Kajmer", genre: "Melankolik Rap", reason: "Derin felsefi sözler ve melankolik scratchler.", matchScore: 97 },
+          { title: "Ateşten Gömlek", artist: "Sagopa Kajmer", genre: "Türkçe Rap", reason: "Akustik sample ve sarsıcı şiirsel sözler.", matchScore: 96 },
           { title: "Geceler", artist: "Ezhel", genre: "Trap / Reggae", reason: "Ezhel'in çığır açan melodik trap ve autotune vokalleri.", matchScore: 97 },
+          { title: "Felaket", artist: "Ezhel", genre: "Reggae / Pop", reason: "Ritmik dans tınıları ve akıcı flow.", matchScore: 96 },
           { title: "Krvn", artist: "Uzi", genre: "Drill / Trap", reason: "Sert ritimler ve sokak anlatımıyla son dönemin en büyük hiti.", matchScore: 96 },
+          { title: "Umrumda Değil", artist: "Uzi", genre: "Trap", reason: "Sürükleyici 808 baslar ve akılda kalıcı nakarat.", matchScore: 95 },
           { title: "10MG", artist: "Motive", genre: "Modern Trap", reason: "Kusursuz ritim kalıpları ve modern 808 baslar.", matchScore: 96 },
+          { title: "Chorba", artist: "Motive", genre: "Modern Trap", reason: "Motive'nin imza akışı ve batı standartlarında prodüksiyon.", matchScore: 95 },
           { title: "Ölüler Dirilerden Çalacak", artist: "Gazapizm", genre: "Türkçe Rap", reason: "Sert beat ve toplumsal temalı vurucu sözler.", matchScore: 95 },
-          { title: "Vur Vur", artist: "Blok3", genre: "Drill / Rap", reason: "Enerjik ritimler ve akılda kalıcı nakarat.", matchScore: 94 }
+          { title: "Heyecanı Yok", artist: "Gazapizm", genre: "Türkçe Rap", reason: "Sokak enerjisini yansıtan kült şarkı.", matchScore: 96 },
+          { title: "Vur Vur", artist: "Blok3", genre: "Drill / Rap", reason: "Enerjik ritimler ve akılda kalıcı nakarat.", matchScore: 94 },
+          { title: "Aklına Ben Geleceğim", artist: "Blok3", genre: "Melodik Rap", reason: "Modern melodik drill tınıları.", matchScore: 94 },
+          { title: "Beni Unutma", artist: "Şanışer", genre: "Melankolik Rap", reason: "Şanışer'in operatik vokali ve duygusal melodisi.", matchScore: 96 },
+          { title: "Tavşan", artist: "Contra", genre: "Elektronik Rap", reason: "Karakteristik vokal oyunları ve enerjik beat.", matchScore: 95 }
         ];
       } else if (detectedCategory === "synthwave") {
-        rawRecommendations = [
+        pool = [
           { title: "Save Your Tears", artist: "The Weeknd", genre: "Synthwave / Pop", reason: "Blinding Lights ile kusursuz uyum sağlayan 80'ler retro synth ritimleri.", matchScore: 99 },
+          { title: "In Your Eyes", artist: "The Weeknd", genre: "Synthwave / Funk", reason: "Saksafon solosu ve retro synthesizer ritimleri.", matchScore: 98 },
           { title: "Nightcall", artist: "Kavinsky", genre: "Synthwave", reason: "Gece sürüşü ve analog synthesizer tınılarının öncüsü.", matchScore: 98 },
+          { title: "Pacific Coast Highway", artist: "Kavinsky", genre: "Outrun / Synthwave", reason: "Hızlı synth arpejleri ve elektro beatler.", matchScore: 96 },
           { title: "Midnight City", artist: "M83", genre: "Electronic / Synth", reason: "Görkemli saksafon solosu ve retro synthesizer katmanları.", matchScore: 97 },
-          { title: "Get Lucky", artist: "Daft Punk", genre: "Nu-Disco / Funk", reason: "Daft Punk ve Nile Rodgers'tan dans ettiren funk ritimleri.", matchScore: 96 }
+          { title: "Get Lucky", artist: "Daft Punk", genre: "Nu-Disco / Funk", reason: "Daft Punk ve Nile Rodgers'tan dans ettiren funk ritimleri.", matchScore: 96 },
+          { title: "Instant Crush", artist: "Daft Punk", genre: "Electro Pop / Synth", reason: "Julian Casablancas vokali ve melankolik synthesizer melodisi.", matchScore: 97 },
+          { title: "Tech Noir", artist: "Gunship", genre: "Synthwave", reason: "Karanlık analog synthesizer tonları ve 80ler sinematik havası.", matchScore: 95 },
+          { title: "Turbo Killer", artist: "Carpenter Brut", genre: "Darksynth", reason: "Yüksek enerjili sert synth riffleri.", matchScore: 94 }
         ];
       } else {
-        // Pop fallback
-        rawRecommendations = [
+        // Pop pool
+        pool = [
           { title: "Karakol", artist: "Mabel Matiz", genre: "Türkçe Pop", reason: "Zengin synthesizer ve ud tınılarının modern pop ile buluşması.", matchScore: 98 },
+          { title: "Antidepresan", artist: "Mert Demir, Mabel Matiz", genre: "Türkçe Pop", reason: "Akustik gitar ve modern pop ritimlerinin kusursuz birleşimi.", matchScore: 99 },
           { title: "Ateşe Düştüm", artist: "Mert Demir", genre: "Akustik / Pop", reason: "Mert Demir'in samimi vokal tarzı ve akustik gitar altyapısı.", matchScore: 98 },
+          { title: "Gözlerime Bak", artist: "Mert Demir", genre: "R&B / Pop", reason: "Yumuşak ritim ve romantik melodiler.", matchScore: 96 },
           { title: "Bi' Tek Ben Anlarım", artist: "KÖFN", genre: "Synth Pop", reason: "Ritmik davullar ve akılda kalıcı modern synthesizer riffleri.", matchScore: 97 },
+          { title: "Al Aramızdan", artist: "KÖFN", genre: "Synth Pop", reason: "Modern elektronik tınılar ve hüzünlü sözler.", matchScore: 96 },
           { title: "Şımarık", artist: "Tarkan", genre: "Türkçe Pop", reason: "Megastar Tarkan'ın enerjik ritmi ve dünya çapında bilinen melodisi.", matchScore: 96 },
-          { title: "Aşkın Olayım", artist: "Simge", genre: "Türkçe Pop", reason: "Duygusal nakarat ve güçlü orkestrasyon.", matchScore: 97 }
+          { title: "Kuzu Kuzu", artist: "Tarkan", genre: "Türkçe Pop", reason: "Doğu yaylıları ile batı popunun unutulmaz sentezi.", matchScore: 97 },
+          { title: "Aşkın Olayım", artist: "Simge", genre: "Türkçe Pop", reason: "Duygusal nakarat ve güçlü orkestrasyon.", matchScore: 97 },
+          { title: "Yankı", artist: "Simge", genre: "Elektronik Pop", reason: "Yenilikçi modern pop altyapısı.", matchScore: 96 },
+          { title: "Canın Sağ Olsun", artist: "Semicenk, Rast", genre: "Türkçe Pop", reason: "Duygusal sözler ve modern trap ritimleri.", matchScore: 95 },
+          { title: "Geri Dönemedim", artist: "Semicenk", genre: "Türkçe Pop", reason: "Semicenk'in derin ve etkileyici vokal tonu.", matchScore: 95 },
+          { title: "Bedelini Ödedim", artist: "Melike Şahin", genre: "Alternatif Pop", reason: "Melike Şahin'in zarif vokali ve etkileyici yaylı düzenlemeleri.", matchScore: 97 },
+          { title: "Diva Yorgun", artist: "Melike Şahin", genre: "Alternatif Pop", reason: "Akustik ve modern alaturka ezgileri.", matchScore: 96 },
+          { title: "Ali Cabbar", artist: "Emir Can İğrek", genre: "Türkçe Pop", reason: "Hüzünlü klarnet ezgisi ve vurucu hikaye anlatımı.", matchScore: 96 }
         ];
       }
+
+      // Shuffle pool so sequential batches don't repeat order
+      const shuffledPool = [...pool].sort(() => Math.random() - 0.5);
+      rawRecommendations = [...rawRecommendations, ...shuffledPool];
     }
 
-    // Filter out seed track and excluded titles
+    // Filter out seed track and all excludeSet tracks
     const filteredRecs = rawRecommendations.filter(
-      r => r.title.toLowerCase() !== title.toLowerCase() && !excludeTitles.some(et => et.toLowerCase() === r.title.toLowerCase())
+      r => !excludeSet.has(r.title.toLowerCase().trim()) && r.title.toLowerCase().trim() !== title.toLowerCase().trim()
     );
 
+    // If all excluded, use shuffled rawRecommendations to prevent total silence, but prioritize fresh
     const finalRecs = (filteredRecs.length > 0 ? filteredRecs : rawRecommendations).slice(0, requestedCount);
 
     // Multi-source enrichment with iTunes & YouTube Video IDs

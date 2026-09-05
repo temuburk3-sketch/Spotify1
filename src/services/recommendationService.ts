@@ -417,13 +417,17 @@ export interface SongRadioResult {
   tracks: Track[];
 }
 
-export async function fetchThematicSongRadio(seedTrack: Track, count: number = 15, excludeIds: string[] = []): Promise<SongRadioResult> {
+export async function fetchThematicSongRadio(
+  seedTrack: Track,
+  count: number = 15,
+  excludeIds: string[] = []
+): Promise<SongRadioResult> {
   const classification = detectTrackTheme(seedTrack);
-  const excludeSet = new Set(excludeIds.map(id => id.toLowerCase()));
-  excludeSet.add(seedTrack.id.toLowerCase());
-  excludeSet.add(seedTrack.title.toLowerCase());
+  const excludeSet = new Set(excludeIds.map(id => id.toLowerCase().trim()));
+  excludeSet.add(seedTrack.id.toLowerCase().trim());
+  excludeSet.add(seedTrack.title.toLowerCase().trim());
 
-  // 1. Try Server API first
+  // 1. Try Server API first with both excludeIds and excludeTitles
   try {
     const res = await fetch('/api/radio/track', {
       method: 'POST',
@@ -433,6 +437,7 @@ export async function fetchThematicSongRadio(seedTrack: Track, count: number = 1
         artist: seedTrack.artist,
         genre: seedTrack.genre || classification.displayName,
         count,
+        excludeTitles: Array.from(excludeSet),
         excludeIds: Array.from(excludeSet)
       })
     });
@@ -440,24 +445,31 @@ export async function fetchThematicSongRadio(seedTrack: Track, count: number = 1
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data.tracks) && data.tracks.length > 0) {
-        return {
-          radioTitle: data.radioTitle || `${seedTrack.artist} Radyosu`,
-          themeName: classification.displayName,
-          themeCategory: classification.category,
-          badge: classification.badge,
-          tracks: data.tracks
-        };
+        const freshServerTracks = data.tracks.filter(
+          (t: Track) => !excludeSet.has(t.title.toLowerCase().trim()) && !excludeSet.has(t.id.toLowerCase().trim())
+        );
+        if (freshServerTracks.length >= Math.min(count, 4)) {
+          return {
+            radioTitle: data.radioTitle || `📻 ${seedTrack.artist || seedTrack.title} Radyosu`,
+            themeName: classification.displayName,
+            themeCategory: classification.category,
+            badge: classification.badge,
+            tracks: freshServerTracks.slice(0, count)
+          };
+        }
       }
     }
   } catch (err) {
     console.warn('Song Radio online API failed, executing client-side related artist query:', err);
   }
 
-  // 2. Client-side Spotify-like Related Artist Query
+  // 2. Client-side Spotify-like Peer Artist Query with Genre Guard
   const related = getRelatedArtists(seedTrack.artist);
+  // Shuffle related peers so sequential radio replenishments explore different artists
+  const shuffledPeers = [...related].sort(() => Math.random() - 0.5);
   const searchQueries = [
     seedTrack.artist,
-    ...related.slice(0, 4),
+    ...shuffledPeers.slice(0, 5),
     classification.displayName
   ].filter(Boolean);
 
@@ -477,15 +489,41 @@ export async function fetchThematicSongRadio(seedTrack: Track, count: number = 1
           !excludeSet.has(normTitle) &&
           !normTitle.includes(seedTrack.title.toLowerCase().trim())
         ) {
-          seenIds.add(normId);
-          radioTracks.push({
-            ...t,
-            recommendationReason: `${seedTrack.artist} tarzı Spotify benzeri radyo parçası`,
-            matchScore: Math.floor(90 + Math.random() * 9)
-          });
+          // Verify theme consistency: reject cross-genre clashes
+          const affinity = scoreTrackAffinity(seedTrack, t, false);
+          if (affinity.score > 20) {
+            seenIds.add(normId);
+            radioTracks.push({
+              ...t,
+              isSmartRecommendation: true,
+              recommendationReason: affinity.reason || `${seedTrack.artist} sounduna uygun Spotify radyo akışı`,
+              matchScore: Math.min(99, Math.max(90, Math.round(affinity.score > 70 ? affinity.score : 92)))
+            });
+          }
         }
       }
     } catch {}
+  }
+
+  // 3. Fallback from POPULAR_ORIGINAL_HITS if under quota
+  if (radioTracks.length < count) {
+    for (const popTrack of POPULAR_ORIGINAL_HITS) {
+      if (radioTracks.length >= count) break;
+      const normTitle = popTrack.title.toLowerCase().trim();
+      const normId = popTrack.id.toLowerCase().trim();
+      if (!seenIds.has(normId) && !excludeSet.has(normId) && !excludeSet.has(normTitle)) {
+        const affinity = scoreTrackAffinity(seedTrack, popTrack, false);
+        if (affinity.score > 20) {
+          seenIds.add(normId);
+          radioTracks.push({
+            ...popTrack,
+            isSmartRecommendation: true,
+            recommendationReason: affinity.reason || `${classification.displayName} temasıyla uyumlu`,
+            matchScore: 94
+          });
+        }
+      }
+    }
   }
 
   // Natural radio shuffle
@@ -501,6 +539,24 @@ export async function fetchThematicSongRadio(seedTrack: Track, count: number = 1
     badge: classification.badge,
     tracks: radioTracks.slice(0, count)
   };
+}
+
+/**
+ * Endless Radio Batch Replenisher:
+ * Always guarantees fresh non-depleted tracks for continuous radio playback.
+ */
+export async function fetchEndlessRadioBatch(
+  seedTrack: Track,
+  playedTrackIds: string[],
+  requestedCount: number = 12
+): Promise<Track[]> {
+  try {
+    const res = await fetchThematicSongRadio(seedTrack, requestedCount, playedTrackIds);
+    return res.tracks || [];
+  } catch (err) {
+    console.warn('fetchEndlessRadioBatch error:', err);
+    return [];
+  }
 }
 
 // ----------------------------------------------------

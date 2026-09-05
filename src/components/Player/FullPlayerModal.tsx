@@ -52,6 +52,8 @@ interface FullPlayerModalProps {
   shuffleMode?: ShuffleMode;
   isABActive: boolean;
   isRadioActive?: boolean;
+  radioSeedTrack?: Track | null;
+  onExitRadio?: () => void;
   onTogglePlay: () => void;
   onPrev: () => void;
   onNext: () => void;
@@ -76,6 +78,8 @@ export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
   shuffleMode = isShuffle ? 'smart' : 'off',
   isABActive,
   isRadioActive = false,
+  radioSeedTrack,
+  onExitRadio,
   onTogglePlay,
   onPrev,
   onNext,
@@ -234,10 +238,10 @@ export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
           <div className="text-center min-w-0 px-2 flex-1 max-w-xs sm:max-w-md">
             <div className="flex items-center justify-center gap-1.5">
               <span className="text-[10px] uppercase font-black text-emerald-400 tracking-widest block truncate">
-                {isRadioActive ? 'ŞARKI RADYOSU ÇALIYOR' : 'ŞU AN ÇALINIYOR'}
+                {isRadioActive ? (radioSeedTrack ? `${radioSeedTrack.artist.toUpperCase()} RADYOSU` : 'ŞARKI RADYOSU') : 'ŞU AN ÇALINIYOR'}
               </span>
               {isRadioActive && (
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
               )}
             </div>
             <h2 className="text-xs sm:text-sm font-bold text-white truncate">{track.title}</h2>
@@ -384,7 +388,21 @@ export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
                       {currentTheme.displayName}
                     </span>
                   )}
-                  {onStartSongRadio && (
+                  {isRadioActive ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm">
+                      <Radio className="w-3 h-3 text-amber-400 animate-pulse" />
+                      <span>{radioSeedTrack ? `${radioSeedTrack.artist} Radyosu` : 'Kesintisiz Radyo'}</span>
+                      {onExitRadio && (
+                        <button
+                          onClick={onExitRadio}
+                          className="ml-1 text-[9px] hover:text-white underline cursor-pointer"
+                          title="Radyoyu Kapat"
+                        >
+                          Kapat
+                        </button>
+                      )}
+                    </span>
+                  ) : onStartSongRadio ? (
                     <button
                       onClick={() => onStartSongRadio(track)}
                       className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-neutral-900 border border-neutral-700 hover:border-amber-400/60 text-amber-300 transition cursor-pointer"
@@ -392,7 +410,7 @@ export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
                     >
                       <Radio className="w-3 h-3" /> Şarkı Radyosu
                     </button>
-                  )}
+                  ) : null}
                 </div>
               </div>
 
