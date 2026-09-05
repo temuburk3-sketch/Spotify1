@@ -380,19 +380,30 @@ export default function App() {
       if (queue.length > 0) {
         const nextTrack = queue[0];
         setQueue(prev => prev.slice(1));
-        handlePlayTrack(nextTrack, [nextTrack], radioTitle);
+        const fullRadioTracks = playbackContext.tracks.some(t => t.id === nextTrack.id)
+          ? playbackContext.tracks
+          : [...playbackContext.tracks, nextTrack];
+        handlePlayTrack(nextTrack, fullRadioTracks, radioTitle);
 
         // Proactive replenishment: when 4 or fewer songs remain, prefetch seamlessly in background
         if (queue.length <= 4 && seed && !isRadioFetchingRef.current) {
           isRadioFetchingRef.current = true;
-          fetchEndlessRadioBatch(seed, Array.from(playedTrackIds), 12)
-            .then(fresh => {
+          fetchThematicSongRadio(seed, 15, Array.from(playedTrackIds))
+            .then(res => {
               isRadioFetchingRef.current = false;
-              if (fresh && fresh.length > 0) {
+              if (res && Array.isArray(res.tracks) && res.tracks.length > 0) {
                 setQueue(prev => {
-                  const existingIds = new Set(prev.map(t => t.id));
-                  const toAdd = fresh.filter(t => !existingIds.has(t.id) && !playedTrackIds.has(t.id));
-                  return [...prev, ...toAdd];
+                  const existingIds = new Set([...prev.map(t => t.id), nextTrack.id]);
+                  const fresh = res.tracks.filter(t => !existingIds.has(t.id) && !playedTrackIds.has(t.id));
+                  return [...prev, ...fresh];
+                });
+                setPlaybackContext(prev => {
+                  const existingIds = new Set(prev.tracks.map(t => t.id));
+                  const fresh = res.tracks.filter(t => !existingIds.has(t.id));
+                  return {
+                    ...prev,
+                    tracks: [...prev.tracks, ...fresh]
+                  };
                 });
               }
             })
@@ -403,24 +414,22 @@ export default function App() {
         return;
       }
 
-      // B. Queue is empty (e.g. rapid skips or finished batch):
-      // Replenish immediately from API/Peer graph without switching to unrelated user playlists!
+      // B. Queue is empty: fetch next batch and continue playback seamlessly
       if (seed) {
-        showToast('📻 Kesintisiz radyo akışı devam ediyor...');
         isRadioFetchingRef.current = true;
         try {
-          const fresh = await fetchEndlessRadioBatch(seed, Array.from(playedTrackIds), 12);
+          const res = await fetchThematicSongRadio(seed, 15, Array.from(playedTrackIds));
           isRadioFetchingRef.current = false;
-          if (fresh && fresh.length > 0) {
-            const [first, ...rest] = fresh;
+          if (res && Array.isArray(res.tracks) && res.tracks.length > 0) {
+            const [first, ...rest] = res.tracks;
             setQueue(rest);
-            handlePlayTrack(first, [first, ...rest], radioTitle);
-            showToast(`📻 Radyo Akışı: "${first.title}" - ${first.artist}`);
+            const fullRadioTracks = [...playbackContext.tracks, ...res.tracks];
+            handlePlayTrack(first, fullRadioTracks, radioTitle);
             return;
           }
         } catch (err) {
           isRadioFetchingRef.current = false;
-          console.warn('Emergency radio refill error:', err);
+          console.warn('Radio replenishment error:', err);
         }
 
         // Emergency fallback: Filter POPULAR_ORIGINAL_HITS strictly by seed's theme so it never plays a mismatch
@@ -431,7 +440,7 @@ export default function App() {
           playedTrackIds
         );
         if (emergencyTrack) {
-          handlePlayTrack(emergencyTrack, [emergencyTrack], radioTitle);
+          handlePlayTrack(emergencyTrack, [...playbackContext.tracks, emergencyTrack], radioTitle);
           return;
         }
       }

@@ -2104,17 +2104,12 @@ app.post("/api/radio/track", async (req, res) => {
       title.toLowerCase().trim()
     ]);
 
+    const hasExclusions = excludeSet.size > 1;
     const radioCacheKey = `radio_${title.trim().toLowerCase()}_${artist.trim().toLowerCase()}_${genre.trim().toLowerCase()}`;
-    const cachedRadio: any = getCached(recommendationsCache, radioCacheKey);
-    if (cachedRadio && Array.isArray(cachedRadio.tracks)) {
-      const freshTracks = cachedRadio.tracks.filter(
-        (t: any) => !excludeSet.has(t.title.toLowerCase().trim()) && !excludeSet.has(t.id?.toLowerCase()?.trim())
-      );
-      if (freshTracks.length >= requestedCount) {
-        return res.json({
-          ...cachedRadio,
-          tracks: freshTracks.slice(0, requestedCount)
-        });
+    if (!hasExclusions) {
+      const cachedRadio: any = getCached(recommendationsCache, radioCacheKey);
+      if (cachedRadio && Array.isArray(cachedRadio.tracks) && cachedRadio.tracks.length >= requestedCount) {
+        return res.json(cachedRadio);
       }
     }
 
@@ -2257,8 +2252,8 @@ Provide a valid JSON array where each object has:
       rawRecommendations = aiResult;
     }
 
-    // Strict Curated Thematic Fallback pools (Massive 20+ tracks per ecosystem)
-    if (rawRecommendations.length === 0 || rawRecommendations.length < requestedCount) {
+    // Fallback pool used ONLY if AI failed or returned zero recommendations
+    if (rawRecommendations.length === 0) {
       let pool: { title: string; artist: string; genre: string; reason: string; matchScore: number }[] = [];
       if (detectedCategory === "arabesk") {
         pool = [
@@ -2364,7 +2359,7 @@ Provide a valid JSON array where each object has:
 
       // Shuffle pool so sequential batches don't repeat order
       const shuffledPool = [...pool].sort(() => Math.random() - 0.5);
-      rawRecommendations = [...rawRecommendations, ...shuffledPool];
+      rawRecommendations = shuffledPool;
     }
 
     // Filter out seed track and all excludeSet tracks
@@ -2429,7 +2424,9 @@ Provide a valid JSON array where each object has:
       generatedAt: new Date().toISOString()
     };
 
-    setCached(recommendationsCache, radioCacheKey, responseData);
+    if (!hasExclusions) {
+      setCached(recommendationsCache, radioCacheKey, responseData);
+    }
     res.json(responseData);
   } catch (err: any) {
     console.error("Radio track API error:", err);

@@ -391,7 +391,7 @@ export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
                   {isRadioActive ? (
                     <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm">
                       <Radio className="w-3 h-3 text-amber-400 animate-pulse" />
-                      <span>{radioSeedTrack ? `${radioSeedTrack.artist} Radyosu` : 'Kesintisiz Radyo'}</span>
+                      <span>{radioSeedTrack ? `${radioSeedTrack.artist} Radyosu` : 'Şarkı Radyosu'}</span>
                       {onExitRadio && (
                         <button
                           onClick={onExitRadio}
