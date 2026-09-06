@@ -34,7 +34,7 @@ import {
   PlaylistFolder
 } from './types';
 import { DEFAULT_PLAYLISTS } from './data/defaultPlaylists';
-import { audioEngine } from './services/audioEngine';
+import { audioEngine, prefetchTrackYouTubeId } from './services/audioEngine';
 import {
   savePlaylistsToDB,
   loadPlaylistsFromDB,
@@ -276,6 +276,7 @@ export default function App() {
 
   // Setup Web Audio listeners
   const handlersRef = useRef<any>({});
+  const lastSkipTsRef = useRef<number>(0);
 
   useEffect(() => {
     audioEngine.setCallbacks({
@@ -287,6 +288,10 @@ export default function App() {
         setDuration(dur);
       },
       onEnded: () => {
+        const now = Date.now();
+        if (now - lastSkipTsRef.current < 800) {
+          return;
+        }
         if (repeatMode === 'one') {
           audioEngine.seek(0);
           audioEngine.resume();
@@ -352,6 +357,24 @@ export default function App() {
 
     recordListeningEvent(track, 0, false);
     audioEngine.playTrack(track);
+
+    // Prefetch YouTube IDs for upcoming tracks in playlist and queue for zero-latency switching
+    try {
+      if (contextTracks && contextTracks.length > 0) {
+        const curIdx = contextTracks.findIndex(t => t.id === track.id);
+        if (curIdx !== -1) {
+          for (let i = 1; i <= 3; i++) {
+            const nextT = contextTracks[curIdx + i];
+            if (nextT) prefetchTrackYouTubeId(nextT);
+          }
+        }
+      }
+      if (queue && queue.length > 0) {
+        for (let i = 0; i < Math.min(2, queue.length); i++) {
+          prefetchTrackYouTubeId(queue[i]);
+        }
+      }
+    } catch {}
   };
 
   const handleTogglePlay = () => {
@@ -380,6 +403,12 @@ export default function App() {
   };
 
   const handleNextTrack = async () => {
+    const now = Date.now();
+    if (now - lastSkipTsRef.current < 700) {
+      return;
+    }
+    lastSkipTsRef.current = now;
+
     // ----------------------------------------------------
     // 1. ENDLESS SONG RADIO CONTINUITY (Never de-themes or stalls)
     // ----------------------------------------------------

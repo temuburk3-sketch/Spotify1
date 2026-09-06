@@ -1,6 +1,25 @@
 import { AudioSettings, Track } from '../types';
 import { getAudioBlobFromCache } from './storage';
 
+export const fullTrackIdCache = new Map<string, { youtubeId: string; duration?: number }>();
+
+export function prefetchTrackYouTubeId(track: Track): void {
+  if (!track || track.youtubeId || track.source === 'local') return;
+  const cacheKey = `${track.title.toLowerCase().trim()}___${(track.artist || '').toLowerCase().trim()}`;
+  if (fullTrackIdCache.has(cacheKey)) return;
+
+  fetch(`/api/audio/full-source?title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(track.artist)}`)
+    .then(r => r.json())
+    .then(data => {
+      if (data.youtubeId) {
+        track.youtubeId = data.youtubeId;
+        if (data.duration && data.duration > 0) track.duration = data.duration;
+        fullTrackIdCache.set(cacheKey, { youtubeId: data.youtubeId, duration: data.duration });
+      }
+    })
+    .catch(() => {});
+}
+
 class AudioEngine {
   private audio: HTMLAudioElement;
   private prefetchAudio: HTMLAudioElement | null = null;
@@ -168,20 +187,9 @@ class AudioEngine {
       document.addEventListener('visibilitychange', () => {
         if (document.hidden) {
           // Tab went to background or phone screen locked.
-          // Mobile operating systems suspend YouTube iframes in the background.
-          // Seamlessly transfer playback to HTML5 Audio with currentTrack.audioUrl at the current timestamp!
-          if (this.activeMode === 'youtube' && this.isPlaying() && this.currentTrack) {
-            const curTime = this.getCurrentTime();
-            if (this.currentTrack.audioUrl) {
-              this.activeMode = 'html5';
-              if (this.ytPlayer && typeof this.ytPlayer.pauseVideo === 'function') {
-                try { this.ytPlayer.pauseVideo(); } catch {}
-              }
-              this.clearYtInterval();
-              this.audio.src = this.currentTrack.audioUrl;
-              this.audio.currentTime = Math.min(curTime, this.audio.duration || curTime);
-              this.audio.play().catch(() => {});
-            }
+          // Keep active playback going! NEVER downgrade full songs to 30-second preview clips!
+          if (this.activeMode === 'youtube' && this.isPlaying()) {
+            this.silentAudio?.play().catch(() => {});
           }
         } else {
           // Returned to foreground
@@ -224,32 +232,32 @@ class AudioEngine {
     this.audio.addEventListener('ended', () => {
       if (this.activeMode !== 'html5') return;
 
+      const cur = this.audio.currentTime || 0;
+      const dur = this.audio.duration || 0;
+
+      // Anti-skip guard: A song can NEVER legitimately end within the first 4 seconds of playback,
+      // or if it hasn't reached within 3 seconds of its duration!
+      if (cur < 4) {
+        console.warn('Ignoring false/premature HTML5 audio ended event at', cur);
+        return;
+      }
+      if (dur > 8 && cur < dur - 3) {
+        console.warn('Ignoring premature audio ended event at', cur, 'of', dur);
+        return;
+      }
+
       const isHidden = typeof document !== 'undefined' && document.hidden;
       const currentAudioDuration = this.audio.duration || 0;
       const expectedTrackDuration = this.currentTrack?.duration || 180;
       const isShortPreview = currentAudioDuration > 0 && currentAudioDuration <= 35 && expectedTrackDuration > 45 && this.currentTrack?.source !== 'local';
 
-      // If in foreground and is preview, try resolving full YouTube stream
-      if (!isHidden && isShortPreview && this.currentTrack && !this.currentTrack.youtubeId) {
-        fetch(`/api/audio/full-source?title=${encodeURIComponent(this.currentTrack.title)}&artist=${encodeURIComponent(this.currentTrack.artist)}`)
-          .then(r => r.json())
-          .then(data => {
-            if (data.youtubeId && this.currentTrack && !document.hidden) {
-              this.currentTrack.youtubeId = data.youtubeId;
-              this.playViaYouTube(data.youtubeId, 30);
-            } else if (this.onEndedCallback) {
-              this.onEndedCallback();
-            }
-          })
-          .catch(() => {
-            if (this.onEndedCallback) {
-              this.onEndedCallback();
-            }
-          });
+      // If preview ended and track has a resolved full YouTube stream ready, continue seamlessly with full song!
+      if (isShortPreview && this.currentTrack?.youtubeId) {
+        this.playViaYouTube(this.currentTrack.youtubeId, Math.floor(cur));
         return;
       }
 
-      // In background or normal track completion: ALWAYS trigger onEndedCallback so the next song plays!
+      // Normal legitimate track completion: reliably advance to next track
       if (this.onEndedCallback) {
         this.onEndedCallback();
       }
@@ -341,8 +349,21 @@ class AudioEngine {
                   // 0: ENDED, 1: PLAYING, 2: PAUSED, 3: BUFFERING
                   if (event.data === 0) {
                     this.clearYtInterval();
-                    if (this.onEndedCallback) {
-                      this.onEndedCallback();
+                    const cur = (typeof this.ytPlayer.getCurrentTime === 'function' ? this.ytPlayer.getCurrentTime() : 0) || 0;
+                    const dur = (typeof this.ytPlayer.getDuration === 'function' ? this.ytPlayer.getDuration() : 0) || (this.currentTrack?.duration || 180);
+
+                    // Anti-skip guard: Only legitimately advance if the track actually played through
+                    if (cur > 10 || (dur > 0 && cur >= dur - 5)) {
+                      if (this.onEndedCallback) {
+                        this.onEndedCallback();
+                      }
+                    } else {
+                      // Premature false ended event (video restricted/blocked or unstarted)
+                      // Fallback immediately to HTML5 stream for THIS track; do NOT skip!
+                      console.warn('YouTube ended prematurely at', cur, 's. Falling back to HTML5 for current track');
+                      if (this.currentTrack && this.currentTrack.audioUrl) {
+                        this.playViaHtml5(this.currentTrack, 0);
+                      }
                     }
                   } else if (event.data === 1) {
                     this.startYtInterval();
@@ -361,18 +382,10 @@ class AudioEngine {
                 },
                 onError: (err: any) => {
                   console.warn('YouTube Player playback notice:', err);
-                  // If this video ID had restrictions (e.g. error 150/101), fetch candidate backup video ID
-                  if (this.currentTrack && this.activeMode === 'youtube') {
-                    const failedId = this.currentTrack.youtubeId;
-                    fetch(`/api/audio/full-source?title=${encodeURIComponent(this.currentTrack.title)}&artist=${encodeURIComponent(this.currentTrack.artist)}&excludeId=${encodeURIComponent(failedId || '')}`)
-                      .then(r => r.json())
-                      .then(data => {
-                        if (data.youtubeId && data.youtubeId !== failedId && this.currentTrack) {
-                          this.currentTrack.youtubeId = data.youtubeId;
-                          this.playViaYouTube(data.youtubeId, 0);
-                        }
-                      })
-                      .catch(() => {});
+                  this.clearYtInterval();
+                  // In case of error (e.g. embed restrictions 150/101), fallback directly to HTML5 Audio for current track
+                  if (this.currentTrack && this.currentTrack.audioUrl) {
+                    this.playViaHtml5(this.currentTrack, 0);
                   }
                 }
               }
@@ -670,18 +683,6 @@ class AudioEngine {
     this.setupMediaSession(track);
     const effectiveStart = startTime > 0 ? startTime : (track.startOffset || 0);
 
-    // 0. In background mode (screen locked / app in background):
-    // Mobile browsers strictly block iframe video start without direct user gesture.
-    // HTML5 Audio has native OS background audio permissions. Always play via HTML5 in background!
-    const isBackground = typeof document !== 'undefined' && document.hidden;
-    if (isBackground && track.audioUrl) {
-      if (this.ytPlayer && this.ytPlayerReady) {
-        try { this.ytPlayer.pauseVideo(); } catch {}
-      }
-      this.clearYtInterval();
-      return this.playViaHtml5(track, effectiveStart);
-    }
-
     // 1. Check if track is cached offline in browser IndexedDB storage
     try {
       const cachedBlob = await getAudioBlobFromCache(track.id);
@@ -694,13 +695,7 @@ class AudioEngine {
       }
     } catch {}
 
-    // 2. If track has youtubeId and we are in foreground, play 100% full song via YouTube Engine
-    if (track.youtubeId && !isBackground) {
-      this.audio.pause();
-      return this.playViaYouTube(track.youtubeId, effectiveStart);
-    }
-
-    // 3. If local file / blob URL or verified full stream, play via HTML5 Audio element
+    // 2. Local file / blob URL or verified full audio stream
     if (track.source === 'local' || (track.audioUrl && (track.audioUrl.startsWith('blob:') || track.audioUrl.startsWith('data:'))) || (track as any).isFullStream) {
       if (this.ytPlayer && this.ytPlayerReady) {
         try { this.ytPlayer.pauseVideo(); } catch {}
@@ -709,31 +704,41 @@ class AudioEngine {
       return this.playViaHtml5(track, effectiveStart);
     }
 
-    // 4. In foreground: Resolve official full YouTube source to prevent preview clip interruption
-    if (!isBackground) {
-      try {
-        if (this.ytPlayer && this.ytPlayerReady) {
-          try { this.ytPlayer.pauseVideo(); } catch {}
-        }
-        this.audio.pause();
+    // 3. FULL SONG PLAYBACK (Never preview / öngösterim):
+    // Check if youtubeId is already attached or present in client cache
+    const cacheKey = `${track.title.toLowerCase().trim()}___${(track.artist || '').toLowerCase().trim()}`;
+    const cachedYt = fullTrackIdCache.get(cacheKey);
+    const targetYtId = track.youtubeId || cachedYt?.youtubeId;
 
-        const res = await fetch(`/api/audio/full-source?title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(track.artist)}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.youtubeId && this.currentTrack?.id === track.id) {
-            track.youtubeId = data.youtubeId;
-            if (data.duration && data.duration > 0) {
-              track.duration = data.duration;
-            }
-            return this.playViaYouTube(data.youtubeId, effectiveStart);
-          }
-        }
-      } catch (e) {
-        console.warn('Full track resolve note:', e);
+    if (targetYtId) {
+      track.youtubeId = targetYtId;
+      if (cachedYt?.duration && !track.duration) {
+        track.duration = cachedYt.duration;
       }
+      this.audio.pause();
+      return this.playViaYouTube(targetYtId, effectiveStart);
     }
 
-    // 5. Fallback HTML5 stream
+    // 4. If youtubeId is not yet resolved, resolve full song from YouTube API
+    try {
+      this.audio.pause();
+      const res = await fetch(`/api/audio/full-source?title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(track.artist)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.youtubeId && this.currentTrack?.id === track.id) {
+          track.youtubeId = data.youtubeId;
+          if (data.duration && data.duration > 0) {
+            track.duration = data.duration;
+          }
+          fullTrackIdCache.set(cacheKey, { youtubeId: data.youtubeId, duration: data.duration });
+          return this.playViaYouTube(data.youtubeId, effectiveStart);
+        }
+      }
+    } catch (e) {
+      console.warn('Full track resolve notice:', e);
+    }
+
+    // 5. Fallback HTML5 only if YouTube resolution fails
     return this.playViaHtml5(track, effectiveStart);
   }
 
