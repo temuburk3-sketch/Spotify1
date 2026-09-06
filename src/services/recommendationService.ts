@@ -78,7 +78,16 @@ export const ARTIST_SIMILARITY_GRAPH: Record<string, string[]> = {
   'semicenk': ['Mert Demir', 'Doğu Swag', 'Rast', 'Burak Bulut', 'Kurtuluş Kuş', 'Simge', 'Reynmen'],
   'simge': ['Mert Demir', 'Edis', 'Merve Özbey', 'İrem Derici', 'Zeynep Bastık', 'Hadise', 'Derya Uluğ'],
   'tarkan': ['Kenan Doğulu', 'Mustafa Sandal', 'Murat Boz', 'Edis', 'Yalın', 'Burak Kut'],
-  'sezen aksu': ['Yıldız Tilbe', 'Sıla', 'Zuhal Olcay', 'Leman Sam', 'Nükhet Duru', 'Sertab Erener', 'Aşkın Nur Yengi'],
+  'sezen aksu': ['Sertab Erener', 'Levent Yüksel', 'Nilüfer', 'Aşkın Nur Yengi', 'Sıla', 'Nükhet Duru', 'Candan Erçetin', 'Yıldız Tilbe', 'Göksel', 'Zuhal Olcay', 'Harun Kolçak', 'Leman Sam'],
+  'sertab erener': ['Sezen Aksu', 'Levent Yüksel', 'Aşkın Nur Yengi', 'Şebnem Ferah', 'Nilüfer', 'Demir Demirkan', 'Sıla'],
+  'levent yüksel': ['Sezen Aksu', 'Sertab Erener', 'Aşkın Nur Yengi', 'Yaşar', 'Harun Kolçak', 'Mirkelam', 'Fatih Erkoç'],
+  'nilüfer': ['Sezen Aksu', 'Kayahan', 'Ajda Pekkan', 'Nükhet Duru', 'Aşkın Nur Yengi', 'Zerrin Özer'],
+  'aşkın nur yengi': ['Sezen Aksu', 'Sertab Erener', 'Levent Yüksel', 'Harun Kolçak', 'Nilüfer', 'Zerrin Özer'],
+  'sıla': ['Sezen Aksu', 'Mabel Matiz', 'Göksel', 'Sertab Erener', 'Ceylan Ertem', 'Simge', 'Yıldız Tilbe'],
+  'göksel': ['Mabel Matiz', 'Sıla', 'Nilüfer', 'Sezen Aksu', 'Candan Erçetin', 'Zuhal Olcay', 'Nükhet Duru'],
+  'candan erçetin': ['Sezen Aksu', 'Göksel', 'Zuhal Olcay', 'Leman Sam', 'Yeni Türkü', 'Ezginin Günlüğü'],
+  'kayahan': ['Nilüfer', 'Sezen Aksu', 'Fikret Kızılok', 'Barış Manço', 'İlhan İrem'],
+  'yaşar': ['Levent Yüksel', 'Baha', 'Ege', 'Çelik', 'Harun Kolçak', 'Ferda Anıl Yarkın'],
   'edis': ['Tarkan', 'Mert Demir', 'Simge', 'Zeynep Bastık', 'Murat Boz', 'Gülşen'],
   'emir can iğrek': ['Mert Demir', 'Mabel Matiz', 'KÖFN', 'Dedublüman', 'Madrigal', 'Pinhani'],
   'melike şahin': ['Mabel Matiz', 'Mert Demir', 'Ceylan Ertem', 'Gaye Su Akyol', 'Evrencan Gündüz'],
@@ -105,6 +114,49 @@ export function getRelatedArtists(artistName: string): string[] {
     }
   }
   return [];
+}
+
+/**
+ * Anti-Monopoly & Artist Diversity Filter
+ * - Enforces strict maximum songs per artist (e.g. max 2 per artist, including seed)
+ * - Interleaves tracks so no two consecutive songs are ever by the same artist
+ */
+export function applyArtistDiversityFilter(
+  tracks: Track[],
+  seedArtist?: string,
+  maxPerArtist: number = 2
+): Track[] {
+  if (!Array.isArray(tracks) || tracks.length <= 1) return tracks;
+
+  const normalizedSeed = (seedArtist || '').toLowerCase().trim();
+  const artistCounts = new Map<string, number>();
+  const accepted: Track[] = [];
+
+  for (const track of tracks) {
+    const rawArtist = track.artist || '';
+    const normArtist = rawArtist.toLowerCase().trim();
+    const count = artistCounts.get(normArtist) || 0;
+    const isSeed = normalizedSeed && (normArtist.includes(normalizedSeed) || normalizedSeed.includes(normArtist));
+    const limit = isSeed ? 2 : maxPerArtist;
+
+    if (count < limit) {
+      artistCounts.set(normArtist, count + 1);
+      accepted.push(track);
+    }
+  }
+
+  // Interleave to guarantee no two consecutive songs are by the same artist
+  const result: Track[] = [];
+  const pool = [...accepted];
+
+  while (pool.length > 0) {
+    const lastArtist = result.length > 0 ? (result[result.length - 1].artist || '').toLowerCase().trim() : null;
+    let chosenIdx = pool.findIndex(t => (t.artist || '').toLowerCase().trim() !== lastArtist);
+    if (chosenIdx === -1) chosenIdx = 0;
+    result.push(pool.splice(chosenIdx, 1)[0]);
+  }
+
+  return result;
 }
 
 // ----------------------------------------------------
@@ -449,12 +501,13 @@ export async function fetchThematicSongRadio(
           (t: Track) => !excludeSet.has(t.title.toLowerCase().trim()) && !excludeSet.has(t.id.toLowerCase().trim())
         );
         if (freshServerTracks.length >= Math.min(count, 4)) {
+          const diversified = applyArtistDiversityFilter(freshServerTracks, seedTrack.artist, 2);
           return {
             radioTitle: data.radioTitle || `📻 ${seedTrack.artist || seedTrack.title} Radyosu`,
             themeName: classification.displayName,
             themeCategory: classification.category,
             badge: classification.badge,
-            tracks: freshServerTracks.slice(0, count)
+            tracks: diversified.slice(0, count)
           };
         }
       }
@@ -463,26 +516,34 @@ export async function fetchThematicSongRadio(
     console.warn('Song Radio online API failed, executing client-side related artist query:', err);
   }
 
-  // 2. Client-side Spotify-like Peer Artist Query with Genre Guard
+  // 2. Client-side Spotify-like Peer Artist Query with strict diversity guard
   const related = getRelatedArtists(seedTrack.artist);
   // Shuffle related peers so sequential radio replenishments explore different artists
   const shuffledPeers = [...related].sort(() => Math.random() - 0.5);
   const searchQueries = [
-    seedTrack.artist,
     ...shuffledPeers.slice(0, 5),
+    seedTrack.artist,
     classification.displayName
   ].filter(Boolean);
 
   const radioTracks: Track[] = [];
   const seenIds = new Set<string>();
+  const artistCounts = new Map<string, number>();
 
   for (const query of searchQueries) {
     if (radioTracks.length >= count) break;
     try {
       const found = await searchUniversalTracks(query);
       for (const t of found) {
+        if (radioTracks.length >= count) break;
         const normTitle = t.title.toLowerCase().trim();
         const normId = t.id.toLowerCase().trim();
+        const normArtist = (t.artist || '').toLowerCase().trim();
+        const currentCount = artistCounts.get(normArtist) || 0;
+
+        // Strict limit: at most 2 per artist
+        if (currentCount >= 2) continue;
+
         if (
           !seenIds.has(normId) &&
           !excludeSet.has(normId) &&
@@ -493,6 +554,7 @@ export async function fetchThematicSongRadio(
           const affinity = scoreTrackAffinity(seedTrack, t, false);
           if (affinity.score > 20) {
             seenIds.add(normId);
+            artistCounts.set(normArtist, currentCount + 1);
             radioTracks.push({
               ...t,
               isSmartRecommendation: true,
@@ -511,10 +573,15 @@ export async function fetchThematicSongRadio(
       if (radioTracks.length >= count) break;
       const normTitle = popTrack.title.toLowerCase().trim();
       const normId = popTrack.id.toLowerCase().trim();
+      const normArtist = (popTrack.artist || '').toLowerCase().trim();
+      const currentCount = artistCounts.get(normArtist) || 0;
+      if (currentCount >= 2) continue;
+
       if (!seenIds.has(normId) && !excludeSet.has(normId) && !excludeSet.has(normTitle)) {
         const affinity = scoreTrackAffinity(seedTrack, popTrack, false);
         if (affinity.score > 20) {
           seenIds.add(normId);
+          artistCounts.set(normArtist, currentCount + 1);
           radioTracks.push({
             ...popTrack,
             isSmartRecommendation: true,
@@ -526,18 +593,15 @@ export async function fetchThematicSongRadio(
     }
   }
 
-  // Natural radio shuffle
-  for (let i = radioTracks.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [radioTracks[i], radioTracks[j]] = [radioTracks[j], radioTracks[i]];
-  }
+  // Apply final diversity filter: caps artist frequency and interleaves so no two consecutive are by the same artist
+  const diversifiedTracks = applyArtistDiversityFilter(radioTracks, seedTrack.artist, 2);
 
   return {
     radioTitle: `📻 ${seedTrack.artist || seedTrack.title} Radyosu`,
     themeName: classification.displayName,
     themeCategory: classification.category,
     badge: classification.badge,
-    tracks: radioTracks.slice(0, count)
+    tracks: diversifiedTracks.slice(0, count)
   };
 }
 
@@ -557,6 +621,112 @@ export async function fetchEndlessRadioBatch(
     console.warn('fetchEndlessRadioBatch error:', err);
     return [];
   }
+}
+
+/**
+ * Playlist Autoplay & Continuity Engine (Akıllı Liste Sonu Kesintisiz Devam):
+ * Analyzes playlist musical DNA and fetches harmonious tracks so music never abruptly stops.
+ */
+export interface PlaylistAutoplayResult {
+  continuationTitle: string;
+  themeName: string;
+  tracks: Track[];
+}
+
+export async function fetchPlaylistAutoplayTracks(
+  playlistTracks: Track[],
+  playlistTitle: string = 'Çalma Listesi',
+  excludeIds: string[] = [],
+  count: number = 15
+): Promise<PlaylistAutoplayResult> {
+  const excludeSet = new Set(excludeIds.map(id => id.toLowerCase().trim()));
+  for (const t of playlistTracks) {
+    if (t.id) excludeSet.add(t.id.toLowerCase().trim());
+    if (t.title) excludeSet.add(t.title.toLowerCase().trim());
+  }
+
+  // 1. Analyze dominant theme and top artists from playlist
+  const artistFreq = new Map<string, number>();
+  const themeFreq = new Map<string, number>();
+  let primaryTheme: ThematicClassification | null = null;
+
+  for (const t of playlistTracks) {
+    if (t.artist) {
+      const a = t.artist.trim();
+      artistFreq.set(a, (artistFreq.get(a) || 0) + 1);
+    }
+    const theme = detectTrackTheme(t);
+    themeFreq.set(theme.displayName, (themeFreq.get(theme.displayName) || 0) + 1);
+    if (!primaryTheme) primaryTheme = theme;
+  }
+
+  let maxThemeCount = 0;
+  let dominantThemeName = primaryTheme?.displayName || 'Türkçe Pop';
+  for (const [name, c] of themeFreq.entries()) {
+    if (c > maxThemeCount) {
+      maxThemeCount = c;
+      dominantThemeName = name;
+    }
+  }
+
+  const topArtists = Array.from(artistFreq.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(e => e[0]);
+
+  const lastTrack = playlistTracks[playlistTracks.length - 1] || playlistTracks[0];
+
+  // 2. Try online /api/radio/playlist endpoint
+  try {
+    const res = await fetch('/api/radio/playlist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        playlistTitle,
+        sampleArtists: topArtists,
+        theme: dominantThemeName,
+        seedTrack: lastTrack ? { title: lastTrack.title, artist: lastTrack.artist } : undefined,
+        count,
+        excludeTitles: Array.from(excludeSet),
+        excludeIds: Array.from(excludeSet)
+      })
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.tracks) && data.tracks.length > 0) {
+        const fresh = data.tracks.filter(
+          (t: Track) => !excludeSet.has(t.title.toLowerCase().trim()) && !excludeSet.has(t.id.toLowerCase().trim())
+        );
+        const diversified = applyArtistDiversityFilter(fresh.length > 0 ? fresh : data.tracks, undefined, 2);
+        if (diversified.length > 0) {
+          return {
+            continuationTitle: data.continuationTitle || `✨ "${playlistTitle}" ile Uyumlu Parçalar`,
+            themeName: dominantThemeName,
+            tracks: diversified.slice(0, count)
+          };
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Playlist autoplay online API failed, executing client-side continuity:', err);
+  }
+
+  // 3. Fallback: Run thematic radio seeded with the playlist's anchor track
+  if (lastTrack) {
+    const radioRes = await fetchThematicSongRadio(lastTrack, count, Array.from(excludeSet));
+    return {
+      continuationTitle: `✨ "${playlistTitle}" ile Uyumlu Parçalar`,
+      themeName: dominantThemeName,
+      tracks: radioRes.tracks
+    };
+  }
+
+  return {
+    continuationTitle: `✨ "${playlistTitle}" ile Uyumlu Parçalar`,
+    themeName: dominantThemeName,
+    tracks: []
+  };
 }
 
 // ----------------------------------------------------

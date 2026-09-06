@@ -57,6 +57,7 @@ import {
   setSmartShuffleEnabled,
   fetchThematicSongRadio,
   fetchEndlessRadioBatch,
+  fetchPlaylistAutoplayTracks,
   getSpotifySmartShuffleTrack,
   getBalancedShuffleQueue
 } from './services/recommendationService';
@@ -499,10 +500,39 @@ export default function App() {
     // ----------------------------------------------------
     // 2. STANDARD QUEUE & PLAYLIST PLAYBACK
     // ----------------------------------------------------
-    if (queue.length > 0) {
-      const nextTrack = queue[0];
-      setQueue(prev => prev.slice(1));
+    const activeQueue = queueRef.current.length > 0 ? queueRef.current : queue;
+    if (activeQueue.length > 0) {
+      const nextTrack = activeQueue[0];
+      const remainingQueue = activeQueue.slice(1);
+      queueRef.current = remainingQueue;
+      setQueue(remainingQueue);
       handlePlayTrack(nextTrack, playbackContext.tracks.length > 0 ? playbackContext.tracks : [nextTrack], playbackContext.title);
+
+      // Proactive continuity replenishment when playing playlist continuation queue (<= 4 songs remain)
+      if (remainingQueue.length <= 4 && playbackContext.title?.includes('Uyumlu Akış') && !isRadioFetchingRef.current) {
+        isRadioFetchingRef.current = true;
+        const baseName = playbackContext.title.replace('✨ ', '').replace(' • Uyumlu Akış', '').trim();
+        fetchPlaylistAutoplayTracks(
+          playbackContext.tracks.slice(-6),
+          baseName,
+          Array.from(playedTrackIdsRef.current),
+          12
+        ).then(res => {
+          isRadioFetchingRef.current = false;
+          if (res && Array.isArray(res.tracks) && res.tracks.length > 0) {
+            const currentQ = queueRef.current;
+            const existingIds = new Set([...currentQ.map(t => t.id), nextTrack.id]);
+            const fresh = res.tracks.filter(t => !existingIds.has(t.id) && !playedTrackIdsRef.current.has(t.id));
+            if (fresh.length > 0) {
+              const updated = [...currentQ, ...fresh];
+              queueRef.current = updated;
+              setQueue(updated);
+            }
+          }
+        }).catch(() => {
+          isRadioFetchingRef.current = false;
+        });
+      }
       return;
     }
 
@@ -549,13 +579,37 @@ export default function App() {
       handlePlayTrack(currentList[currentIdx + 1], currentList, playbackContext.title);
     } else if (repeatMode === 'all' && currentList.length > 0) {
       handlePlayTrack(currentList[0], currentList, playbackContext.title);
-    } else if (getEndlessAutoplay() && currentTrack) {
-      // Endless Autoplay mode when regular playlist finishes
-      const allAppTracks = playlists.flatMap(p => p.tracks);
-      const autoNext = selectSmartThematicNextTrack(currentTrack, allAppTracks, playedTrackIds);
+    } else if (currentTrack) {
+      // 3. SMART PLAYLIST CONTINUITY (Akıllı Liste Sonu Kesintisiz Akış)
+      // When a playlist finishes, seamlessly transition to harmonious tracks matching the playlist's musical DNA
+      const playlistName = playbackContext.title || playlists.find(p => p.id === activePlaylistId)?.name || 'Çalma Listesi';
+      showToast(`✨ "${playlistName}" tamamlandı, uyumlu parçalarla devam ediliyor...`);
+
+      try {
+        const autoplayResult = await fetchPlaylistAutoplayTracks(
+          currentList.length > 0 ? currentList : [currentTrack],
+          playlistName,
+          Array.from(playedTrackIdsRef.current),
+          15
+        );
+
+        if (autoplayResult && Array.isArray(autoplayResult.tracks) && autoplayResult.tracks.length > 0) {
+          const [firstTrack, ...restTracks] = autoplayResult.tracks;
+          queueRef.current = restTracks;
+          setQueue(restTracks);
+          const fullContextTracks = [...currentList, ...autoplayResult.tracks];
+          handlePlayTrack(firstTrack, fullContextTracks, `✨ ${playlistName} • Uyumlu Akış`);
+          return;
+        }
+      } catch (err) {
+        console.warn('Playlist continuity error:', err);
+      }
+
+      // Emergency fallback: select matching thematic hit from popular library
+      const autoNext = selectSmartThematicNextTrack(currentTrack, POPULAR_ORIGINAL_HITS, playedTrackIdsRef.current);
       if (autoNext) {
-        handlePlayTrack(autoNext, allAppTracks, `📻 Otomatik Çalma`);
-        showToast(`✨ Otomatik Çalma: "${autoNext.title}" - ${autoNext.artist}`);
+        handlePlayTrack(autoNext, [...currentList, autoNext], `✨ ${playlistName} • Uyumlu Akış`);
+        showToast(`✨ Akış Devamı: "${autoNext.title}" - ${autoNext.artist}`);
       }
     }
   };
