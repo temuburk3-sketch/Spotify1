@@ -156,83 +156,136 @@ async function searchFullSongVideoId(title: string, artist: string, excludeId?: 
     return cached.result;
   }
 
-  try {
-    // Queries targeting official audio / studio master
-    const queries = [
-      `${cleanTitle} ${cleanArtist} Official Audio`,
-      `${cleanTitle} ${cleanArtist} Topic`,
-      `${cleanTitle} ${cleanArtist} Lyrics`,
-      `${cleanTitle} ${cleanArtist}`
-    ];
+  const collectedCandidates: string[] = [];
+  let foundResult: { youtubeId: string; duration?: number; candidateIds?: string[] } | null = null;
 
-    const collectedCandidates: string[] = [];
+  const queries = [
+    `${cleanTitle} ${cleanArtist} Official Audio`,
+    `${cleanTitle} ${cleanArtist} Topic`,
+    `${cleanTitle} ${cleanArtist} Lyrics`,
+    `${cleanTitle} ${cleanArtist}`
+  ];
 
-    for (const query of queries) {
-      const ytSearchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query.trim())}`;
-      const res = await fetch(ytSearchUrl, {
+  const addCandidate = (id: string, dur?: number) => {
+    if (id && id.length === 11 && id !== excludeId && !collectedCandidates.includes(id)) {
+      collectedCandidates.push(id);
+      if (!foundResult) {
+        foundResult = { youtubeId: id, duration: dur || 210, candidateIds: collectedCandidates };
+      }
+    }
+  };
+
+  // 1. Primary Strategy: YouTube InnerTube API (JSON, fast, zero cookie-consent blocks)
+  for (const query of queries) {
+    if (foundResult && collectedCandidates.length >= 3) break;
+    try {
+      const itRes = await fetch("https://www.youtube.com/youtubei/v1/search?prettyPrint=false", {
+        method: "POST",
         headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-          "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"
-        }
+          "Content-Type": "application/json",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+          "X-YouTube-Client-Name": "1",
+          "X-YouTube-Client-Version": "2.20240501.00.00",
+          "Origin": "https://www.youtube.com"
+        },
+        body: JSON.stringify({
+          context: {
+            client: {
+              hl: "tr",
+              gl: "TR",
+              clientName: "WEB",
+              clientVersion: "2.20240501.00.00"
+            }
+          },
+          query: query.trim()
+        }),
+        signal: AbortSignal.timeout(4500)
       });
-      if (!res.ok) continue;
-      const html = await res.text();
 
-      let foundResult: { youtubeId: string; duration?: number; candidateIds?: string[] } | null = null;
+      if (itRes.ok) {
+        const itData = await itRes.json();
+        const section = itData?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents?.[0]?.itemSectionRenderer?.contents;
+        if (Array.isArray(section)) {
+          for (const item of section) {
+            const v = item.videoRenderer;
+            if (v && v.videoId) {
+              const durText = v.lengthText?.simpleText || "";
+              const parts = durText.split(':').map(Number);
+              let durSecs = 210;
+              if (parts.length === 2) durSecs = parts[0] * 60 + parts[1];
+              else if (parts.length === 3) durSecs = parts[0] * 3600 + parts[1] * 60 + parts[2];
 
-      // Parse structured JSON ytInitialData
-      const match = html.match(/var ytInitialData = ({.*?});<\/script>/) || html.match(/ytInitialData\s*=\s*({.*?});/);
-      if (match) {
-        try {
-          const data = JSON.parse(match[1]);
-          const contents = data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents?.[0]?.itemSectionRenderer?.contents;
-          if (Array.isArray(contents)) {
-            for (const item of contents) {
-              if (item.videoRenderer) {
-                const v = item.videoRenderer;
-                const videoId = v.videoId;
-                if (!videoId || videoId === excludeId) continue;
-                
-                collectedCandidates.push(videoId);
-                const lenStr = v.lengthText?.simpleText || "";
-                
-                // Parse duration
-                const parts = lenStr.split(":").map(Number);
-                let durSecs = 0;
-                if (parts.length === 2) durSecs = parts[0] * 60 + parts[1];
-                else if (parts.length === 3) durSecs = parts[0] * 3600 + parts[1] * 60 + parts[2];
-
-                // Accept regular songs between 40 sec and 15 min
-                if (durSecs >= 40 && durSecs <= 900 && !foundResult) {
-                  foundResult = { youtubeId: videoId, duration: durSecs, candidateIds: collectedCandidates };
-                }
+              if (durSecs >= 40 && durSecs <= 900) {
+                addCandidate(v.videoId, durSecs);
               }
             }
           }
-        } catch {}
+        }
       }
+    } catch {}
+  }
 
-      // Fast regex fallback
-      if (!foundResult) {
-        const videoIdMatches = [...html.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)];
-        for (const m of videoIdMatches) {
-          if (m[1] && m[1].length === 11 && m[1] !== excludeId) {
-            collectedCandidates.push(m[1]);
-            if (!foundResult) {
-              foundResult = { youtubeId: m[1], duration: 210, candidateIds: collectedCandidates };
+  // 2. Secondary Strategy: Standard YouTube HTML scraping with anti-consent cookies
+  if (!foundResult) {
+    try {
+      for (const query of queries) {
+        if (foundResult) break;
+        const ytSearchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query.trim())}`;
+        const res = await fetch(ytSearchUrl, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Cookie": "SOCS=CAESEwgDEgk2NDU4Mzc3Mzg; CONSENT=YES+cb.20230531-04-p0.en+FX+999; PREF=tz=Europe.Istanbul&hl=tr&gl=TR&f6=40000000; GPS=1"
+          },
+          signal: AbortSignal.timeout(4000)
+        });
+        if (!res.ok) continue;
+        const html = await res.text();
+
+        // Parse structured JSON ytInitialData
+        const match = html.match(/var ytInitialData = ({.*?});<\/script>/) || html.match(/ytInitialData\s*=\s*({.*?});/);
+        if (match) {
+          try {
+            const data = JSON.parse(match[1]);
+            const contents = data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents?.[0]?.itemSectionRenderer?.contents;
+            if (Array.isArray(contents)) {
+              for (const item of contents) {
+                if (item.videoRenderer) {
+                  const v = item.videoRenderer;
+                  const videoId = v.videoId;
+                  if (!videoId || videoId === excludeId) continue;
+                  
+                  const lenStr = v.lengthText?.simpleText || "";
+                  const parts = lenStr.split(":").map(Number);
+                  let durSecs = 0;
+                  if (parts.length === 2) durSecs = parts[0] * 60 + parts[1];
+                  else if (parts.length === 3) durSecs = parts[0] * 3600 + parts[1] * 60 + parts[2];
+
+                  if (durSecs >= 40 && durSecs <= 900) {
+                    addCandidate(videoId, durSecs);
+                  }
+                }
+              }
             }
+          } catch {}
+        }
+
+        if (!foundResult) {
+          const videoIdMatches = [...html.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)];
+          for (const m of videoIdMatches) {
+            addCandidate(m[1], 210);
           }
         }
       }
-
-      if (foundResult) {
-        foundResult.candidateIds = [...new Set(collectedCandidates)];
-        videoIdCache.set(cacheKey, { result: foundResult, timestamp: Date.now() });
-        return foundResult;
-      }
+    } catch (e) {
+      console.warn("YouTube videoId lookup error:", e);
     }
-  } catch (e) {
-    console.warn("YouTube videoId lookup error:", e);
+  }
+
+  if (foundResult) {
+    foundResult.candidateIds = [...new Set(collectedCandidates)];
+    videoIdCache.set(cacheKey, { result: foundResult, timestamp: Date.now() });
+    return foundResult;
   }
 
   videoIdCache.set(cacheKey, { result: null, timestamp: Date.now() });
@@ -1462,6 +1515,7 @@ const CURATED_PLAYLISTS_POOL = [
 async function searchArtistsInternal(query: string): Promise<any[]> {
   const artists: any[] = [];
   const seenNames = new Set<string>();
+  const seenIds = new Set<string>();
   const lowerQ = query.toLowerCase().trim();
 
   // 1. Check famous catalog first (if query matches or if general/category query)
@@ -1470,9 +1524,10 @@ async function searchArtistsInternal(query: string): Promise<any[]> {
       fa.name.toLowerCase().includes(lowerQ) || lowerQ.includes(fa.name.toLowerCase()) ||
       fa.genres.some(g => g.toLowerCase().includes(lowerQ) || lowerQ.includes(g.toLowerCase()));
     
-    if (matches && !seenNames.has(fa.name.toLowerCase())) {
+    if (matches && !seenNames.has(fa.name.toLowerCase()) && !seenIds.has(fa.id)) {
       artists.push(fa);
       seenNames.add(fa.name.toLowerCase());
+      seenIds.add(fa.id);
     }
   }
 
@@ -1486,11 +1541,13 @@ async function searchArtistsInternal(query: string): Promise<any[]> {
         if (Array.isArray(data.data)) {
           for (const item of data.data) {
             const normName = (item.name || "").toLowerCase().trim();
-            if (normName && !seenNames.has(normName)) {
+            const artId = `dz_art_${item.id}`;
+            if (normName && !seenNames.has(normName) && !seenIds.has(artId)) {
               seenNames.add(normName);
+              seenIds.add(artId);
               const fansCount = item.nb_fan ? `${(item.nb_fan >= 1000000 ? (item.nb_fan / 1000000).toFixed(1) + 'M' : (item.nb_fan / 1000).toFixed(0) + 'K')} Dinleyici` : 'Sanatçı';
               artists.push({
-                id: `dz_art_${item.id}`,
+                id: artId,
                 deezerId: item.id,
                 name: item.name,
                 picture: item.picture_xl || item.picture_big || item.picture_medium || "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600",
@@ -1517,8 +1574,13 @@ async function searchArtistsInternal(query: string): Promise<any[]> {
           if (Array.isArray(data.results)) {
             for (const item of data.results) {
               const normName = (item.artistName || "").toLowerCase().trim();
-              if (normName && !seenNames.has(normName)) {
+              let artId = `it_art_${item.artistId}`;
+              if (seenIds.has(artId)) {
+                artId = `${artId}_${normName.replace(/[^a-z0-9]/gi, '_')}`;
+              }
+              if (normName && !seenNames.has(normName) && !seenIds.has(artId)) {
                 seenNames.add(normName);
+                seenIds.add(artId);
                 let artPic = "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600";
                 try {
                   const songSearch = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(item.artistName)}&entity=song&limit=1`);
@@ -1531,7 +1593,7 @@ async function searchArtistsInternal(query: string): Promise<any[]> {
                 } catch {}
 
                 artists.push({
-                  id: `it_art_${item.artistId}`,
+                  id: artId,
                   itunesId: item.artistId,
                   name: item.artistName,
                   picture: artPic,
@@ -1551,9 +1613,10 @@ async function searchArtistsInternal(query: string): Promise<any[]> {
 
   // If query was empty or sparse, fill with rest of famous catalog
   for (const fa of FAMOUS_ARTISTS_CATALOG) {
-    if (!seenNames.has(fa.name.toLowerCase())) {
+    if (!seenNames.has(fa.name.toLowerCase()) && !seenIds.has(fa.id)) {
       artists.push(fa);
       seenNames.add(fa.name.toLowerCase());
+      seenIds.add(fa.id);
     }
   }
 
@@ -2079,6 +2142,7 @@ app.get("/api/audio/full-source", async (req, res) => {
   try {
     const result = await searchFullSongVideoId(title, (artist as string) || "", excludeId ? String(excludeId) : undefined);
     if (result && result.youtubeId) {
+      res.setHeader('Cache-Control', 'public, s-maxage=604800, stale-while-revalidate=86400');
       return res.json({
         youtubeId: result.youtubeId,
         duration: result.duration,
@@ -2087,7 +2151,7 @@ app.get("/api/audio/full-source", async (req, res) => {
         artist
       });
     }
-    res.json({ youtubeId: null });
+    res.json({ youtubeId: null, candidateIds: [] });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

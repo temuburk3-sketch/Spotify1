@@ -1,20 +1,57 @@
 import { AudioSettings, Track } from '../types';
 import { getAudioBlobFromCache } from './storage';
 
-export const fullTrackIdCache = new Map<string, { youtubeId: string; duration?: number }>();
+const STORAGE_CACHE_KEY = 'soundpulse_yt_cache_v2';
+
+function loadCachedTrackIds(): Map<string, { youtubeId: string; duration?: number; candidateIds?: string[] }> {
+  const map = new Map<string, { youtubeId: string; duration?: number; candidateIds?: string[] }>();
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_CACHE_KEY) : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        for (const [k, v] of parsed) {
+          if (k && v && v.youtubeId) {
+            map.set(k, v);
+          }
+        }
+      }
+    }
+  } catch {}
+  return map;
+}
+
+export const fullTrackIdCache = loadCachedTrackIds();
+
+export function saveCachedTrackIds(): void {
+  try {
+    if (typeof window === 'undefined') return;
+    const entries = Array.from(fullTrackIdCache.entries()).slice(-600);
+    localStorage.setItem(STORAGE_CACHE_KEY, JSON.stringify(entries));
+  } catch {}
+}
 
 export function prefetchTrackYouTubeId(track: Track): void {
   if (!track || track.youtubeId || track.source === 'local') return;
   const cacheKey = `${track.title.toLowerCase().trim()}___${(track.artist || '').toLowerCase().trim()}`;
-  if (fullTrackIdCache.has(cacheKey)) return;
+  if (fullTrackIdCache.has(cacheKey)) {
+    const cached = fullTrackIdCache.get(cacheKey)!;
+    track.youtubeId = cached.youtubeId;
+    if (cached.duration && !track.duration) track.duration = cached.duration;
+    if (cached.candidateIds) track.candidateIds = cached.candidateIds;
+    return;
+  }
 
   fetch(`/api/audio/full-source?title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(track.artist)}`)
     .then(r => r.json())
     .then(data => {
       if (data.youtubeId) {
         track.youtubeId = data.youtubeId;
+        track.candidateIds = data.candidateIds && data.candidateIds.length > 0 ? data.candidateIds : [data.youtubeId];
+        track.currentCandidateIndex = 0;
         if (data.duration && data.duration > 0) track.duration = data.duration;
-        fullTrackIdCache.set(cacheKey, { youtubeId: data.youtubeId, duration: data.duration });
+        fullTrackIdCache.set(cacheKey, { youtubeId: data.youtubeId, duration: data.duration, candidateIds: track.candidateIds });
+        saveCachedTrackIds();
       }
     })
     .catch(() => {});
@@ -257,6 +294,26 @@ class AudioEngine {
         return;
       }
 
+      // If short preview ended and no YouTube ID was attached yet, do a quick resolve before prematurely advancing
+      if (isShortPreview && this.currentTrack) {
+        const t = this.currentTrack;
+        fetch(`/api/audio/full-source?title=${encodeURIComponent(t.title)}&artist=${encodeURIComponent(t.artist)}`)
+          .then(r => r.json())
+          .then(data => {
+            if (data.youtubeId && this.currentTrack?.id === t.id) {
+              t.youtubeId = data.youtubeId;
+              t.candidateIds = data.candidateIds || [data.youtubeId];
+              this.playViaYouTube(data.youtubeId, Math.floor(cur));
+              return;
+            }
+            if (this.onEndedCallback) this.onEndedCallback();
+          })
+          .catch(() => {
+            if (this.onEndedCallback) this.onEndedCallback();
+          });
+        return;
+      }
+
       // Normal legitimate track completion: reliably advance to next track
       if (this.onEndedCallback) {
         this.onEndedCallback();
@@ -359,10 +416,9 @@ class AudioEngine {
                       }
                     } else {
                       // Premature false ended event (video restricted/blocked or unstarted)
-                      // Fallback immediately to HTML5 stream for THIS track; do NOT skip!
-                      console.warn('YouTube ended prematurely at', cur, 's. Falling back to HTML5 for current track');
-                      if (this.currentTrack && this.currentTrack.audioUrl) {
-                        this.playViaHtml5(this.currentTrack, 0);
+                      console.warn('YouTube ended prematurely at', cur, 's for', this.currentTrack?.title);
+                      if (this.currentTrack) {
+                        this.tryNextCandidateOrFallback(this.currentTrack, 0);
                       }
                     }
                   } else if (event.data === 1) {
@@ -383,9 +439,9 @@ class AudioEngine {
                 onError: (err: any) => {
                   console.warn('YouTube Player playback notice:', err);
                   this.clearYtInterval();
-                  // In case of error (e.g. embed restrictions 150/101), fallback directly to HTML5 Audio for current track
-                  if (this.currentTrack && this.currentTrack.audioUrl) {
-                    this.playViaHtml5(this.currentTrack, 0);
+                  // In case of error (e.g. embed restrictions 150/101, blocked 100), try next candidate or fallback
+                  if (this.currentTrack) {
+                    this.tryNextCandidateOrFallback(this.currentTrack, 0);
                   }
                 }
               }
@@ -712,6 +768,8 @@ class AudioEngine {
 
     if (targetYtId) {
       track.youtubeId = targetYtId;
+      track.candidateIds = cachedYt?.candidateIds || (track.candidateIds?.length ? track.candidateIds : [targetYtId]);
+      track.currentCandidateIndex = 0;
       if (cachedYt?.duration && !track.duration) {
         track.duration = cachedYt.duration;
       }
@@ -719,7 +777,7 @@ class AudioEngine {
       return this.playViaYouTube(targetYtId, effectiveStart);
     }
 
-    // 4. If youtubeId is not yet resolved, resolve full song from YouTube API
+    // 4. If youtubeId is not yet resolved, resolve full song from API
     try {
       this.audio.pause();
       const res = await fetch(`/api/audio/full-source?title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(track.artist)}`);
@@ -727,10 +785,13 @@ class AudioEngine {
         const data = await res.json();
         if (data.youtubeId && this.currentTrack?.id === track.id) {
           track.youtubeId = data.youtubeId;
+          track.candidateIds = data.candidateIds && data.candidateIds.length > 0 ? data.candidateIds : [data.youtubeId];
+          track.currentCandidateIndex = 0;
           if (data.duration && data.duration > 0) {
             track.duration = data.duration;
           }
-          fullTrackIdCache.set(cacheKey, { youtubeId: data.youtubeId, duration: data.duration });
+          fullTrackIdCache.set(cacheKey, { youtubeId: data.youtubeId, duration: data.duration, candidateIds: track.candidateIds });
+          saveCachedTrackIds();
           return this.playViaYouTube(data.youtubeId, effectiveStart);
         }
       }
@@ -738,8 +799,51 @@ class AudioEngine {
       console.warn('Full track resolve notice:', e);
     }
 
+    // Fast retry with cleaned title (strip parenthesis, feat., etc.)
+    if (!track.youtubeId) {
+      try {
+        const cleanT = track.title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').replace(/feat\..*$/i, '').trim();
+        if (cleanT !== track.title) {
+          const res2 = await fetch(`/api/audio/full-source?title=${encodeURIComponent(cleanT)}&artist=${encodeURIComponent(track.artist)}`);
+          if (res2.ok) {
+            const data2 = await res2.json();
+            if (data2.youtubeId && this.currentTrack?.id === track.id) {
+              track.youtubeId = data2.youtubeId;
+              track.candidateIds = data2.candidateIds || [data2.youtubeId];
+              track.currentCandidateIndex = 0;
+              if (data2.duration && data2.duration > 0) track.duration = data2.duration;
+              fullTrackIdCache.set(cacheKey, { youtubeId: data2.youtubeId, duration: data2.duration, candidateIds: track.candidateIds });
+              saveCachedTrackIds();
+              return this.playViaYouTube(data2.youtubeId, effectiveStart);
+            }
+          }
+        }
+      } catch {}
+    }
+
     // 5. Fallback HTML5 only if YouTube resolution fails
     return this.playViaHtml5(track, effectiveStart);
+  }
+
+  public tryNextCandidateOrFallback(track: Track, startTime = 0): void {
+    if (!track) return;
+    const candidates = track.candidateIds || [];
+    const currentIndex = track.currentCandidateIndex ?? 0;
+    const nextIndex = currentIndex + 1;
+
+    if (nextIndex < candidates.length && candidates[nextIndex]) {
+      console.log(`Trying candidate ${nextIndex + 1}/${candidates.length} (${candidates[nextIndex]}) for track: "${track.title}"`);
+      track.currentCandidateIndex = nextIndex;
+      track.youtubeId = candidates[nextIndex];
+      this.playViaYouTube(candidates[nextIndex], startTime);
+      return;
+    }
+
+    // If no more YouTube candidates, fallback to HTML5 preview stream
+    if (track.audioUrl) {
+      console.warn(`All YouTube candidates exhausted for "${track.title}". Falling back to HTML5.`);
+      this.playViaHtml5(track, startTime);
+    }
   }
 
   private async playViaYouTube(youtubeId: string, startTime = 0): Promise<void> {
@@ -785,6 +889,24 @@ class AudioEngine {
     this.clearYtInterval();
     if (this.ytPlayer && this.ytPlayerReady) {
       try { this.ytPlayer.pauseVideo(); } catch {}
+    }
+
+    // If playing HTML5 preview and full YouTube stream wasn't resolved yet, resolve in background for seamless transition
+    if (track.source !== 'local' && !track.youtubeId) {
+      const cacheKey = `${track.title.toLowerCase().trim()}___${(track.artist || '').toLowerCase().trim()}`;
+      fetch(`/api/audio/full-source?title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(track.artist)}`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.youtubeId && this.currentTrack?.id === track.id) {
+            track.youtubeId = data.youtubeId;
+            track.candidateIds = data.candidateIds && data.candidateIds.length > 0 ? data.candidateIds : [data.youtubeId];
+            track.currentCandidateIndex = 0;
+            if (data.duration && data.duration > 0) track.duration = data.duration;
+            fullTrackIdCache.set(cacheKey, { youtubeId: data.youtubeId, duration: data.duration, candidateIds: track.candidateIds });
+            saveCachedTrackIds();
+          }
+        })
+        .catch(() => {});
     }
 
     const audioSrc = overrideSrc || track.audioUrl;

@@ -1079,9 +1079,9 @@ export const SearchView: React.FC<SearchViewProps> = memo(({
             return (
               <div className="space-y-4">
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-                  {displayed.map((artist) => (
+                  {displayed.map((artist, idx) => (
                     <button
-                      key={artist.id}
+                      key={`${artist.id}_${idx}`}
                       onClick={() => handleOpenArtist(artist)}
                       className="flex flex-col items-center text-center p-3.5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-800/90 border border-neutral-800/80 hover:border-emerald-500/50 transition group cursor-pointer shadow-md"
                     >
@@ -1248,9 +1248,9 @@ export const SearchView: React.FC<SearchViewProps> = memo(({
             return (
               <div className="space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                  {displayed.map((pl) => (
+                  {displayed.map((pl, idx) => (
                     <div
-                      key={pl.id}
+                      key={`${pl.id}_${idx}`}
                       onClick={() => handleOpenPlaylist(pl)}
                       className="group flex flex-col p-3 rounded-2xl bg-neutral-900/60 hover:bg-neutral-800/90 border border-neutral-800/80 hover:border-emerald-500/40 transition cursor-pointer shadow-md"
                     >

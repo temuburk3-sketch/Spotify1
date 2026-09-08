@@ -7,6 +7,8 @@ export interface Track {
   coverUrl: string;
   audioUrl: string;
   youtubeId?: string;
+  candidateIds?: string[];
+  currentCandidateIndex?: number;
   startOffset?: number;
   source?: 'spotify' | 'local' | 'stream' | 'synth';
   spotifyId?: string;

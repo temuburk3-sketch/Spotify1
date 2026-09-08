@@ -379,13 +379,31 @@ export async function searchUniversalArtists(query: string): Promise<ArtistResul
 
   const results: ArtistResult[] = [];
   const seenNames = new Set<string>();
+  const seenIds = new Set<string>();
 
   const addArtist = (artist: ArtistResult) => {
-    const norm = artist.name.toLowerCase().trim();
-    if (!seenNames.has(norm)) {
-      seenNames.add(norm);
-      results.push(artist);
+    const norm = (artist.name || '').toLowerCase().trim();
+    if (!norm || seenNames.has(norm)) {
+      return;
     }
+
+    let finalId = (artist.id || '').trim();
+    if (!finalId) {
+      finalId = `art_${Math.random().toString(36).substring(2, 9)}`;
+    }
+    if (seenIds.has(finalId)) {
+      finalId = `${finalId}_${norm.replace(/[^a-z0-9]/gi, '_')}`;
+    }
+    if (seenIds.has(finalId)) {
+      finalId = `${finalId}_${results.length}`;
+    }
+
+    seenNames.add(norm);
+    seenIds.add(finalId);
+    results.push({
+      ...artist,
+      id: finalId
+    });
   };
 
   // 1. Search Master Artists Catalog
@@ -454,10 +472,18 @@ export async function searchUniversalPlaylists(query: string, userPlaylists: Pla
   const seenIds = new Set<string>();
 
   const addPl = (pl: PlaylistSearchResult) => {
-    if (!seenIds.has(pl.id)) {
-      seenIds.add(pl.id);
-      results.push(pl);
+    let finalId = (pl.id || '').trim();
+    if (!finalId) {
+      finalId = `pl_${Math.random().toString(36).substring(2, 9)}`;
     }
+    if (seenIds.has(finalId)) {
+      finalId = `${finalId}_${results.length}`;
+    }
+    seenIds.add(finalId);
+    results.push({
+      ...pl,
+      id: finalId
+    });
   };
 
   // 1. User playlists matching query
