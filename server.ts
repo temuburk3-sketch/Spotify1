@@ -2157,39 +2157,124 @@ app.get("/api/audio/full-source", async (req, res) => {
   }
 });
 
-// Helper: Anti-Monopoly & Artist Diversity Filter (Caps max per artist, guarantees no consecutive duplicates)
+// Helper: Clean track titles & artist names from YouTube artifacts, channel handles, and downloader prefixes
+function sanitizeTrackTitleAndArtist(rawTitle: string, rawArtist: string): { title: string; artist: string } {
+  let title = (rawTitle || '').trim();
+  let artist = (rawArtist || '').trim();
+
+  // 1. Remove downloader stamps
+  title = title.replace(/^(?:y2mate(?:\.com)?|snaptube|ssyoutube|mp3clan|tubidy)\s*[-_:]*\s*/gi, '');
+  title = title.replace(/\s*[-_:]*\s*(?:y2mate(?:\.com)?|snaptube|ssyoutube|mp3clan)\s*$/gi, '');
+  artist = artist.replace(/^(?:y2mate(?:\.com)?|snaptube|ssyoutube|mp3clan|tubidy)\s*[-_:]*\s*/gi, '');
+
+  // 2. Strip social/channel handles like @Romantikmusik, @channel
+  title = title.replace(/@[\w\.\-]+(?:\s*[-_:]*\s*|\b)/gi, '');
+  artist = artist.replace(/@[\w\.\-]+(?:\s*[-_:]*\s*|\b)/gi, '');
+
+  // 3. Detect if artist is clearly a YouTube channel name or junk uploader
+  const isJunkArtist =
+    !artist ||
+    /^(?:sanatçı|artist|unknown|youtube|spotify|vevo|official|music|records|audio|levent ayyıldız|bunlar firavun|y2mate)/i.test(artist) ||
+    artist.length > 35;
+
+  // If title has "Artist - Song", extract real artist and song
+  if (title.includes(' - ')) {
+    const parts = title.split(' - ').map(p => p.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      if (isJunkArtist) {
+        artist = parts[0];
+        title = parts[1];
+      } else if (parts[0].toLowerCase().includes(artist.toLowerCase())) {
+        title = parts.slice(1).join(' - ');
+      }
+    }
+  }
+
+  // 4. Strip YouTube tags, brackets, and phrases
+  title = title
+    .replace(/\s*[\(\[](?:feat\.|ft\.|with|official|resmi|lyric|lyrics|video|klip|audio|remastered|remaster|live|canlı|akustik|acoustic|deluxe|bonus|edit|radio edit|hd|4k|hq|sözleriyle|orijinal|kayıt|plak).*?[\)\]]/gi, '')
+    .replace(/\s*-\s*(?:Single|Live|Remastered|Remaster|Acoustic|Bonus Track|Original Mix|Edit|Radio Edit|Instrumental|Karaoke|Official).*$/i, '')
+    .replace(/\s*[-_:]+\s*(?:bunlar firavun|dinle|full albüm|kesintisiz|albüm).*$/gi, '')
+    .replace(/\.(?:mp3|mp4|m4a|wav|flac|ogg)$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  artist = artist
+    .replace(/\s*[\(\[](?:feat\.|ft\.|with|official|records|topic).*?[\)\]]/gi, '')
+    .replace(/\s*-\s*Topic$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!title) title = rawTitle.trim();
+  if (!artist) artist = rawArtist.trim() || 'Sanatçı';
+
+  return { title, artist };
+}
+
+function getCanonicalSongKey(title: string): string {
+  return (title || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+// Helper: Anti-Monopoly & Artist Diversity Filter (Caps max per artist, guarantees no consecutive duplicates and enforces spacing)
 function applyArtistDiversityFilter<T extends { artist: string; title: string }>(
   items: T[],
   seedArtist?: string,
-  maxPerArtist: number = 2
+  maxPerArtist: number = 2,
+  minArtistSpacing: number = 3
 ): T[] {
   if (!Array.isArray(items) || items.length <= 1) return items;
 
   const normalizedSeed = (seedArtist || '').toLowerCase().trim();
+  const seenSongKeys = new Set<string>();
   const artistCounts = new Map<string, number>();
-  const accepted: T[] = [];
+  const sanitizedList: T[] = [];
 
   for (const item of items) {
-    const normArtist = (item.artist || '').toLowerCase().trim();
+    const { title: cleanTitle, artist: cleanArtist } = sanitizeTrackTitleAndArtist(item.title, item.artist);
+    const songKey = getCanonicalSongKey(cleanTitle);
+
+    // Block exact or near-duplicate songs
+    if (seenSongKeys.has(songKey)) continue;
+
+    const normArtist = cleanArtist.toLowerCase().trim();
     const count = artistCounts.get(normArtist) || 0;
     const isSeed = normalizedSeed && (normArtist.includes(normalizedSeed) || normalizedSeed.includes(normArtist));
     const limit = isSeed ? 2 : maxPerArtist;
 
     if (count < limit) {
+      seenSongKeys.add(songKey);
       artistCounts.set(normArtist, count + 1);
-      accepted.push(item);
+      sanitizedList.push({
+        ...item,
+        title: cleanTitle,
+        artist: cleanArtist
+      });
     }
   }
 
-  // Interleave to guarantee no consecutive same-artist
+  // Interleave with minArtistSpacing to guarantee artist diversity and spacing
   const result: T[] = [];
-  const pool = [...accepted];
+  const pool = [...sanitizedList];
 
   while (pool.length > 0) {
-    const lastArtist = result.length > 0 ? (result[result.length - 1].artist || '').toLowerCase().trim() : null;
-    let chosenIdx = pool.findIndex(t => (t.artist || '').toLowerCase().trim() !== lastArtist);
-    if (chosenIdx === -1) chosenIdx = 0;
-    result.push(pool.splice(chosenIdx, 1)[0]);
+    const recentArtists = result.slice(-minArtistSpacing).map(t => (t.artist || '').toLowerCase().trim());
+    const lastArtist = recentArtists[recentArtists.length - 1] || null;
+
+    let candidateIdx = pool.findIndex(t => {
+      const a = (t.artist || '').toLowerCase().trim();
+      return !recentArtists.includes(a);
+    });
+
+    if (candidateIdx === -1) {
+      candidateIdx = pool.findIndex(t => (t.artist || '').toLowerCase().trim() !== lastArtist);
+    }
+    if (candidateIdx === -1) candidateIdx = 0;
+
+    result.push(pool.splice(candidateIdx, 1)[0]);
   }
 
   return result;
@@ -2252,8 +2337,63 @@ app.all("/api/radio/track", async (req, res) => {
     let detectedCategory = "pop";
 
     if (
+      normalizedQuery.includes("ferdi özbeğen") ||
+      normalizedQuery.includes("ferdi ozbegen") ||
+      normalizedQuery.includes("piyanist") ||
+      normalizedQuery.includes("tanju okan") ||
+      normalizedQuery.includes("asu maralman") ||
+      normalizedQuery.includes("esmeray") ||
+      normalizedQuery.includes("ayla dikmen") ||
+      normalizedQuery.includes("tülay özer") ||
+      normalizedQuery.includes("selami şahin") ||
+      normalizedQuery.includes("ümit besen") ||
+      normalizedQuery.includes("nejat alp") ||
+      normalizedQuery.includes("arif susam") ||
+      normalizedQuery.includes("coşkun sabah") ||
+      normalizedQuery.includes("neşe karaböcek") ||
+      normalizedQuery.includes("gülden karaböcek") ||
+      normalizedQuery.includes("dario moreno") ||
+      normalizedQuery.includes("semiramis pekkan") ||
+      normalizedQuery.includes("ayten alpman") ||
+      normalizedQuery.includes("erol evgin") ||
+      normalizedQuery.includes("zeki müren") ||
+      normalizedQuery.includes("müzeyyen senar") ||
+      normalizedQuery.includes("ilhan şeşen") ||
+      normalizedQuery.includes("nostalji") ||
+      normalizedQuery.includes("şanson")
+    ) {
+      detectedTheme = "70'ler & 80'ler Nostalji / Taverna & Piyanist";
+      detectedCategory = "nostalji";
+    } else if (
+      normalizedQuery.includes("kenan doğulu") ||
+      normalizedQuery.includes("kurşun adres sormaz") ||
+      normalizedQuery.includes("kursun adres sormaz") ||
+      normalizedQuery.includes("levent yüksel") ||
+      normalizedQuery.includes("med cezir") ||
+      normalizedQuery.includes("harun kolçak") ||
+      normalizedQuery.includes("gir kanıma") ||
+      normalizedQuery.includes("aşkın nur yengi") ||
+      normalizedQuery.includes("yalancı bahar") ||
+      normalizedQuery.includes("bendeniz") ||
+      normalizedQuery.includes("gönül yorgunu") ||
+      normalizedQuery.includes("yaşar") ||
+      normalizedQuery.includes("kumralım") ||
+      normalizedQuery.includes("mirkelam") ||
+      normalizedQuery.includes("her gece") ||
+      normalizedQuery.includes("candan erçetin") ||
+      normalizedQuery.includes("fatih erkoç") ||
+      normalizedQuery.includes("çelik") ||
+      normalizedQuery.includes("hercai") ||
+      normalizedQuery.includes("burak kut") ||
+      normalizedQuery.includes("kaybolan yıllar") ||
+      normalizedQuery.includes("90lar") ||
+      normalizedQuery.includes("doksanlar")
+    ) {
+      detectedTheme = "90'lar Altın Çağ Türkçe Pop Klasikleri";
+      detectedCategory = "pop90s";
+    } else if (
       normalizedQuery.includes("müslüm") ||
-      normalizedQuery.includes("ferdi") ||
+      normalizedQuery.includes("ferdi tayfur") ||
       normalizedQuery.includes("bergen") ||
       normalizedQuery.includes("azer bülbül") ||
       normalizedQuery.includes("cengiz kurtoğlu") ||
@@ -2265,11 +2405,9 @@ app.all("/api/radio/track", async (req, res) => {
       normalizedQuery.includes("hakan taşıyan") ||
       normalizedQuery.includes("kibariye") ||
       normalizedQuery.includes("güllü") ||
-      normalizedQuery.includes("ümit besen") ||
       normalizedQuery.includes("selahattin özdemir") ||
       normalizedQuery.includes("arabesk") ||
-      normalizedQuery.includes("damar") ||
-      normalizedQuery.includes("taverna")
+      normalizedQuery.includes("damar")
     ) {
       detectedTheme = "Arabesk & Damar / Klasik Fantezi";
       detectedCategory = "arabesk";
@@ -2344,30 +2482,42 @@ app.all("/api/radio/track", async (req, res) => {
     const prompt = `You are the Spotify-grade Song Radio recommendation engine.
 A user is playing the seed track: "${title}" by "${artist}" (Genre/Theme: ${genre || detectedTheme}).
 
-CRITICAL CONSTRAINT 1 - GENRE & VIBE CONSISTENCY:
+CRITICAL CONSTRAINT 1 - GENRE & VIBE CONSISTENCY (ABSOLUTE PRIORITY):
 You MUST recommend ONLY songs that belong to the EXACT SAME musical genre, mood, cultural sphere, and sonic ecosystem.
-- If the seed track is Arabesk/Damar (e.g. Müslüm Gürses, Ferdi Tayfur, Bergen, Azer Bülbül, Cengiz Kurtoğlu, İbrahim Tatlıses, Ebru Gündeş, etc.), EVERY recommendation MUST be pure Turkish Arabesk, Damar, or classic emotional tavern/fantezi music.
-- If the seed track is Turkish Rock (e.g. Duman, Mor ve Ötesi, Şebnem Ferah, Teoman, Barış Manço, etc.), EVERY recommendation MUST be Turkish Rock or Anadolu Rock.
-- If the seed track is Turkish Rap (e.g. Ceza, Sagopa Kajmer, Ezhel, Uzi, Motive, etc.), EVERY recommendation MUST be Turkish Rap / Hip-Hop.
-- If the seed track is Synthwave (e.g. The Weeknd, Kavinsky, M83), recommend 80s synthwave/retrowave tracks.
-- If the seed track is Turkish Pop (e.g. Sezen Aksu, Mert Demir, Mabel Matiz, KÖFN, Tarkan), recommend contemporary Turkish pop/synth-pop hits.
+- If the seed track is 70s-80s Nostalgia, Taverna or Piano Chanson (e.g. Ferdi Özbeğen, Tanju Okan, Nilüfer, Asu Maralman, Esmeray, Ayla Dikmen, Tülay Özer, Selami Şahin, Cengiz Kurtoğlu, Ümit Besen, Neşe Karaböcek, Dario Moreno, Zeki Müren, Semiramis Pekkan):
+  EVERY recommendation MUST be pure authentic 70s/80s nostalgic light music, taverna, or chanson.
+  STRICTLY FORBIDDEN: modern 2020s pop (NO Mabel Matiz, NO Mert Demir, NO KÖFN), electronic, or rap!
+- If the seed track is 90s Golden Age Turkish Pop (e.g. Kenan Doğulu, Sezen Aksu 90s, Levent Yüksel, Sertab Erener, Harun Kolçak, Aşkın Nur Yengi, Bendeniz, Yaşar, Candan Erçetin, Mirkelam, Çelik, Burak Kut):
+  EVERY recommendation MUST be genuine 90s Turkish pop classics (such as "Kaybolan Yıllar", "Med Cezir", "Aşk", "Gir Kanıma", "Yalancı Bahar", "Gönül Yorgunu", "Kumralım", "Yalan", "Ateşini Yolla Bana").
+  STRICTLY FORBIDDEN: modern artists like Mabel Matiz, Mert Demir, KÖFN, Semicenk, trap, or autotune songs.
+- If the seed track is Arabesk/Damar (e.g. Müslüm Gürses, Ferdi Tayfur, Bergen, Azer Bülbül, Cengiz Kurtoğlu, İbrahim Tatlıses, Ebru Gündeş):
+  EVERY recommendation MUST be pure Turkish Arabesk, Damar, or classic emotional fantezi music.
+- If the seed track is Turkish Rock (e.g. Duman, Mor ve Ötesi, Şebnem Ferah, Teoman, Barış Manço):
+  EVERY recommendation MUST be Turkish Rock or Anadolu Rock.
+- If the seed track is Turkish Rap (e.g. Ceza, Sagopa Kajmer, Ezhel, Uzi, Motive):
+  EVERY recommendation MUST be Turkish Rap / Hip-Hop.
+- If the seed track is Synthwave (e.g. The Weeknd, Kavinsky, M83):
+  Recommend 80s synthwave/retrowave tracks.
+- If the seed track is Contemporary 2020s Turkish Pop (e.g. Mert Demir, Mabel Matiz, KÖFN, Simge, Edis):
+  Recommend contemporary Turkish pop/synth-pop hits.
 
 CRITICAL CONSTRAINT 2 - STRICT ARTIST DIVERSITY & ANTI-MONOPOLY (MANDATORY):
 - DO NOT fill the radio with only songs by "${artist}"! Recommend at most 1 or 2 songs by "${artist}" across the entire batch!
 - The remaining ${requestedCount - 2} songs MUST be by DIFFERENT, HIGHLY COMPATIBLE peer artists from the same musical school, sound, and era.
-- Example: If the seed artist is "Sezen Aksu", you MUST include her musical peers (Sertab Erener, Levent Yüksel, Nilüfer, Aşkın Nur Yengi, Sıla, Nükhet Duru, Candan Erçetin, Yıldız Tilbe, Göksel, Zuhal Olcay, Harun Kolçak) with at most 1-2 Sezen Aksu tracks.
-- Example: If the seed artist is "Müslüm Gürses", include Ferdi Tayfur, Bergen, Azer Bülbül, Cengiz Kurtoğlu, Orhan Gencebay, Ebru Gündeş, Ahmet Kaya.
-- Example: If the seed artist is "Duman", include Mor ve Ötesi, Şebnem Ferah, Teoman, Adamlar, Madrigal, Gripin, Manga, Athena.
 - NO TWO CONSECUTIVE SONGS can be by the same artist! Every consecutive track MUST feature a different artist.
+
+CRITICAL CONSTRAINT 3 - METADATA SANITIZATION:
+- Return strictly clean, canonical song titles and clean artist names.
+- STRICTLY FORBIDDEN: YouTube labels, downloader stamps, channel handles (@handle), "[Official Video]", "(Lyrics)", "HD", "4K", or "(Remastered)".
 
 Generate exactly ${requestedCount} genuine, widely popular, real songs.
 Exclude any of these titles if present: ${excludeTitles.join(", ")}.
 
 Provide a valid JSON array where each object has:
-- "title": exact song title
-- "artist": artist name
+- "title": exact clean song title
+- "artist": exact clean artist name
 - "genre": primary subgenre
-- "reason": concise Turkish explanation of why this song seamlessly flows with "${title}" (e.g. "${artist} ekolünü tamamlayan Sertab Erener klasiği", "Aynı akustik yaylılar ve samimi vokal")
+- "reason": concise Turkish explanation of why this song seamlessly flows with "${title}" (e.g. "${artist} ekolünü tamamlayan klasik", "Aynı akustik yaylılar ve samimi vokal")
 - "matchScore": number between 90 and 99`;
 
     const aiResult = await generateJsonWithGemini<{ title: string; artist: string; genre: string; reason: string; matchScore: number }[]>(
@@ -2382,7 +2532,42 @@ Provide a valid JSON array where each object has:
     // Fallback pool used ONLY if AI failed or returned zero recommendations
     if (rawRecommendations.length === 0) {
       let pool: { title: string; artist: string; genre: string; reason: string; matchScore: number }[] = [];
-      if (detectedCategory === "arabesk") {
+      if (detectedCategory === "nostalji") {
+        pool = [
+          { title: "Büklüm Büklüm", artist: "Ferdi Özbeğen", genre: "Piyanist / Taverna", reason: "Ferdi Özbeğen piyanist ekolü, duygu dolu piyano ve akustik yaylılar.", matchScore: 99 },
+          { title: "Gündüzüm Seninle", artist: "Ferdi Özbeğen", genre: "Piyanist / Taverna", reason: "Piyano eşliğinde romantik nostalji klasiği.", matchScore: 98 },
+          { title: "Dilek Taşı", artist: "Ferdi Özbeğen", genre: "Nostalji / Taverna", reason: "Unutulmaz melodisiyle Ferdi Özbeğen başyapıtı.", matchScore: 99 },
+          { title: "Kadınım", artist: "Tanju Okan", genre: "Nostalji / Şanson", reason: "Tanju Okan'ın derin bariton sesi ve duygusal derinliği.", matchScore: 98 },
+          { title: "Öyle Sarhoş Olsam Ki", artist: "Tanju Okan", genre: "Nostalji / Şanson", reason: "Akustik yaylılar ve unutulmaz nostaljik melodi.", matchScore: 97 },
+          { title: "Bal Gibi Olur", artist: "Asu Maralman", genre: "70ler Nostalji", reason: "70'lerin tatlı ve zarif nostalji tınıları.", matchScore: 96 },
+          { title: "Unutma Beni", artist: "Esmeray", genre: "70ler Nostalji", reason: "Türk pop tarihinin en samimi ve dokunaklı nostalji klasiği.", matchScore: 98 },
+          { title: "Anlamazdın", artist: "Ayla Dikmen", genre: "70ler Nostalji", reason: "Zamansız nostaljik aşk şarkısı.", matchScore: 97 },
+          { title: "Büklüm Büklüm", artist: "Tülay Özer", genre: "Nostalji", reason: "Sezen Aksu bestesi, Tülay Özer'in büyüleyici 70'ler yorumu.", matchScore: 97 },
+          { title: "Göreceksin Kendini", artist: "Nilüfer", genre: "70ler Pop / Nostalji", reason: "Nilüfer'in 70'ler altın döneminden unutulmaz melodi.", matchScore: 96 },
+          { title: "Gitme Sana Muhtacım", artist: "Selami Şahin", genre: "Nostalji / Taverna", reason: "Selami Şahin'in bestecilik dehası ve içten yorumu.", matchScore: 97 },
+          { title: "Duyanlara Duymayanlara", artist: "Cengiz Kurtoğlu", genre: "Taverna", reason: "Taverna müziğinin efsanevi eseri.", matchScore: 96 },
+          { title: "Nikah Masası", artist: "Ümit Besen", genre: "Taverna / Piyanist", reason: "Piyano başında söylenen en büyük taverna klasiği.", matchScore: 97 },
+          { title: "Deniz ve Mehtap", artist: "Dario Moreno", genre: "Nostalji / Şanson", reason: "Ege ve Akdeniz esintili şanson klasiği.", matchScore: 96 },
+          { title: "Bana Yalan Söylediler", artist: "Semiramis Pekkan", genre: "70ler Nostalji", reason: "Derin melankoli ve nostaljik orkestrasyon.", matchScore: 97 },
+          { title: "İşte Öyle Bir Şey", artist: "Erol Evgin", genre: "Nostalji", reason: "Çiğdem Talu & Melih Kibar ortaklığının altın eseri.", matchScore: 97 }
+        ];
+      } else if (detectedCategory === "pop90s") {
+        pool = [
+          { title: "Kurşun Adres Sormaz Ki", artist: "Kenan Doğulu", genre: "90lar Pop", reason: "Kenan Doğulu'nun duygusal 90'lar ballad başyapıtı.", matchScore: 99 },
+          { title: "Kaybolan Yıllar", artist: "Sezen Aksu", genre: "90lar Pop / Klasik", reason: "Akustik piyano ve kemanlarla Türk müziğinin en büyük klasiği.", matchScore: 99 },
+          { title: "Med Cezir", artist: "Levent Yüksel", genre: "90lar Pop", reason: "Onno Tunç & Sezen Aksu prodüksiyonu, 90'ların zirvesi.", matchScore: 99 },
+          { title: "Gir Kanıma", artist: "Harun Kolçak", genre: "90lar Pop", reason: "90'lar pop patlamasının en enerjik ve sevilen klasiği.", matchScore: 98 },
+          { title: "Aşk", artist: "Sertab Erener", genre: "90lar Pop", reason: "Sertab Erener'in güçlü vokali ve dokunaklı melodisi.", matchScore: 98 },
+          { title: "Yalancı Bahar", artist: "Aşkın Nur Yengi", genre: "90lar Pop", reason: "90'lar Türk popunun en derin ve melankolik şarkısı.", matchScore: 97 },
+          { title: "Gönül Yorgunu", artist: "Bendeniz", genre: "90lar Pop", reason: "Bendeniz'in içten sözleri ve 90'lar gitar tonları.", matchScore: 96 },
+          { title: "Kumralım", artist: "Yaşar", genre: "90lar Pop", reason: "Akustik gitar ve Yaşar'ın sıcak melodisi.", matchScore: 97 },
+          { title: "Yalan", artist: "Candan Erçetin", genre: "90lar Pop", reason: "Fransız şansonu etkisinde 90'lar zarafeti.", matchScore: 96 },
+          { title: "Her Gece", artist: "Mirkelam", genre: "90lar Pop", reason: "90'lar Türk popunun koşar adımlarla simgesi olan parça.", matchScore: 97 },
+          { title: "Hercai", artist: "Çelik", genre: "90lar Pop", reason: "Dönemin en dokunaklı gitar balladlarından.", matchScore: 96 },
+          { title: "Benimle Oynama", artist: "Burak Kut", genre: "90lar Pop", reason: "90'lar gençlik enerjisi ve akılda kalıcı nakaratı.", matchScore: 95 },
+          { title: "Tuana", artist: "Levent Yüksel", genre: "90lar Pop", reason: "Flamenko gitar ve eşsiz Levent Yüksel vokali.", matchScore: 98 }
+        ];
+      } else if (detectedCategory === "arabesk") {
         pool = [
           { title: "Affet", artist: "Müslüm Gürses", genre: "Arabesk / Damar", reason: "Müslüm Baba klasiği, derin duygusal keder ve bağlama nağmeleri.", matchScore: 99 },
           { title: "Nilüfer", artist: "Müslüm Gürses", genre: "Arabesk / Damar", reason: "Yoğun keman ve akustik yaylı tınıları.", matchScore: 98 },
@@ -2496,16 +2681,22 @@ Provide a valid JSON array where each object has:
       rawRecommendations = shuffledPool;
     }
 
-    // Filter out seed track and all excludeSet tracks
-    const filteredRecs = rawRecommendations.filter(
+    // Filter out seed track and all excludeSet tracks, sanitizing each one first
+    const sanitizedRecs = rawRecommendations.map(r => {
+      const { title: cleanTitle, artist: cleanArtist } = sanitizeTrackTitleAndArtist(r.title, r.artist);
+      return { ...r, title: cleanTitle, artist: cleanArtist };
+    });
+
+    const filteredRecs = sanitizedRecs.filter(
       r => !excludeSet.has(r.title.toLowerCase().trim()) && r.title.toLowerCase().trim() !== title.toLowerCase().trim()
     );
 
-    // Apply strict Artist Diversity Filter (Max 2 per artist, interleaving to prevent consecutive duplicates)
+    // Apply strict Artist Diversity Filter (Max 2 per artist, interleaving with minArtistSpacing = 3 to prevent consecutive duplicates)
     const diversifiedRecs = applyArtistDiversityFilter(
-      filteredRecs.length > 0 ? filteredRecs : rawRecommendations,
+      filteredRecs.length > 0 ? filteredRecs : sanitizedRecs,
       artist,
-      2
+      2,
+      3
     );
 
     const finalRecs = diversifiedRecs.slice(0, requestedCount);

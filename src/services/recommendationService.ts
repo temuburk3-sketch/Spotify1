@@ -9,6 +9,8 @@ const ENDLESS_AUTOPLAY_KEY = 'soundpulse_endless_autoplay';
 const SMART_SHUFFLE_KEY = 'soundpulse_smart_shuffle_enabled';
 
 export type MusicThemeCategory =
+  | 'turkce_nostalji_taverna'
+  | 'turkce_90lar_pop'
   | 'arabesk_damar'
   | 'turkce_rock'
   | 'turkce_rap'
@@ -30,18 +32,289 @@ export interface ThematicClassification {
 // Related Artists Graph (Spotify-style Peer Mapping)
 // ----------------------------------------------------
 export const ARTIST_SIMILARITY_GRAPH: Record<string, string[]> = {
+  // 70'ler & 80'ler Nostalji, Taverna & Klasik Şanson (Spotify Piyanist Ekosistemi)
+  'ferdi özbeğen': [
+    'Asu Maralman',
+    'Esmeray',
+    'Ayla Dikmen',
+    'Tanju Okan',
+    'Nilüfer',
+    'Tülay Özer',
+    'Selami Şahin',
+    'Cengiz Kurtoğlu',
+    'Ümit Besen',
+    'Neşe Karaböcek',
+    'Gülden Karaböcek',
+    'Dario Moreno',
+    'Semiramis Pekkan',
+    'Zeki Müren',
+    'Ayten Alpman',
+    'Erol Evgin',
+    'İlhan Şeşen',
+    'Nazan Öncel',
+    'Ahmet Kaya',
+    'Pilli Bebek',
+    'Mehmet Güreli'
+  ],
+  'tanju okan': [
+    'Ferdi Özbeğen',
+    'Dario Moreno',
+    'Ayten Alpman',
+    'Erol Evgin',
+    'Nilüfer',
+    'Esmeray',
+    'Ayla Dikmen',
+    'Zeki Müren',
+    'İlhan Şeşen'
+  ],
+  'asu maralman': [
+    'Ferdi Özbeğen',
+    'Esmeray',
+    'Ayla Dikmen',
+    'Tülay Özer',
+    'Semiramis Pekkan',
+    'Tanju Okan',
+    'Nilüfer'
+  ],
+  'esmeray': [
+    'Ferdi Özbeğen',
+    'Ayla Dikmen',
+    'Asu Maralman',
+    'Tülay Özer',
+    'Nilüfer',
+    'Semiramis Pekkan',
+    'Tanju Okan'
+  ],
+  'ayla dikmen': [
+    'Ferdi Özbeğen',
+    'Esmeray',
+    'Asu Maralman',
+    'Tülay Özer',
+    'Semiramis Pekkan',
+    'Tanju Okan',
+    'Nilüfer'
+  ],
+  'tülay özer': [
+    'Ferdi Özbeğen',
+    'Esmeray',
+    'Ayla Dikmen',
+    'Nilüfer',
+    'Asu Maralman',
+    'Gülden Karaböcek',
+    'Selami Şahin'
+  ],
+  'selami şahin': [
+    'Ferdi Özbeğen',
+    'Ümit Besen',
+    'Cengiz Kurtoğlu',
+    'Zeki Müren',
+    'Coşkun Sabah',
+    'Arif Susam'
+  ],
+  'cengiz kurtoğlu': [
+    'Ümit Besen',
+    'Ferdi Özbeğen',
+    'Arif Susam',
+    'Nejat Alp',
+    'Selami Şahin',
+    'Coşkun Sabah',
+    'Hakan Altun'
+  ],
+  'ümit besen': [
+    'Cengiz Kurtoğlu',
+    'Ferdi Özbeğen',
+    'Arif Susam',
+    'Nejat Alp',
+    'Selami Şahin',
+    'Coşkun Sabah'
+  ],
+  'neşe karaböcek': [
+    'Gülden Karaböcek',
+    'Ferdi Özbeğen',
+    'Gönül Akkor',
+    'Zeki Müren',
+    'Müzeyyen Senar'
+  ],
+  'gülden karaböcek': [
+    'Neşe Karaböcek',
+    'Ferdi Özbeğen',
+    'Tülay Özer',
+    'Esmeray',
+    'Selami Şahin'
+  ],
+  'dario moreno': [
+    'Ferdi Özbeğen',
+    'Tanju Okan',
+    'Ayten Alpman',
+    'Semiramis Pekkan',
+    'Erol Evgin'
+  ],
+  'semiramis pekkan': [
+    'Ferdi Özbeğen',
+    'Ayla Dikmen',
+    'Esmeray',
+    'Tanju Okan',
+    'Dario Moreno',
+    'Nilüfer'
+  ],
+  'zeki müren': [
+    'Ferdi Özbeğen',
+    'Müzeyyen Senar',
+    'Tanju Okan',
+    'Selami Şahin',
+    'Emel Sayın',
+    'Gönül Yazar'
+  ],
+  'ayten alpman': [
+    'Tanju Okan',
+    'Ferdi Özbeğen',
+    'Erol Evgin',
+    'İlhan Şeşen',
+    'Nilüfer'
+  ],
+  'erol evgin': [
+    'Ferdi Özbeğen',
+    'Tanju Okan',
+    'Nilüfer',
+    'Ayten Alpman',
+    'Kayahan',
+    'İlhan Şeşen'
+  ],
+  'ilhan şeşen': [
+    'Ferdi Özbeğen',
+    'Fikret Kızılok',
+    'Tanju Okan',
+    'Bülent Ortaçgil',
+    'Yeni Türkü',
+    'Ezginin Günlüğü'
+  ],
+
+  // 90'lar Altın Çağ Türkçe Pop (Kurşun Adres Sormaz Ki -> Kaybolan Yıllar Akışı)
+  'kenan doğulu': [
+    'Sezen Aksu',
+    'Levent Yüksel',
+    'Sertab Erener',
+    'Harun Kolçak',
+    'Aşkın Nur Yengi',
+    'Bendeniz',
+    'Yaşar',
+    'Candan Erçetin',
+    'Nilüfer',
+    'Mirkelam',
+    'Fatih Erkoç',
+    'Çelik',
+    'Tarkan'
+  ],
+  'sezen aksu': [
+    'Levent Yüksel',
+    'Sertab Erener',
+    'Kenan Doğulu',
+    'Harun Kolçak',
+    'Aşkın Nur Yengi',
+    'Nilüfer',
+    'Candan Erçetin',
+    'Bendeniz',
+    'Yaşar',
+    'Zuhal Olcay',
+    'Leman Sam'
+  ],
+  'levent yüksel': [
+    'Sezen Aksu',
+    'Sertab Erener',
+    'Kenan Doğulu',
+    'Harun Kolçak',
+    'Aşkın Nur Yengi',
+    'Yaşar',
+    'Mirkelam',
+    'Fatih Erkoç'
+  ],
+  'sertab erener': [
+    'Sezen Aksu',
+    'Levent Yüksel',
+    'Kenan Doğulu',
+    'Harun Kolçak',
+    'Aşkın Nur Yengi',
+    'Nilüfer',
+    'Şebnem Ferah'
+  ],
+  'harun kolçak': [
+    'Aşkın Nur Yengi',
+    'Kenan Doğulu',
+    'Levent Yüksel',
+    'Sezen Aksu',
+    'Bendeniz',
+    'Çelik',
+    'Sertab Erener'
+  ],
+  'aşkın nur yengi': [
+    'Sezen Aksu',
+    'Sertab Erener',
+    'Levent Yüksel',
+    'Harun Kolçak',
+    'Kenan Doğulu',
+    'Nilüfer',
+    'Zerrin Özer'
+  ],
+  'bendeniz': [
+    'Harun Kolçak',
+    'Kenan Doğulu',
+    'Aşkın Nur Yengi',
+    'Yaşar',
+    'Çelik',
+    'Burak Kut'
+  ],
+  'yaşar': [
+    'Levent Yüksel',
+    'Kenan Doğulu',
+    'Bendeniz',
+    'Harun Kolçak',
+    'Ferda Anıl Yarkın',
+    'Ege'
+  ],
+  'candan erçetin': [
+    'Sezen Aksu',
+    'Göksel',
+    'Zuhal Olcay',
+    'Leman Sam',
+    'Yeni Türkü',
+    'Ezginin Günlüğü',
+    'Nilüfer'
+  ],
+  'nilüfer': [
+    'Sezen Aksu',
+    'Kayahan',
+    'Ajda Pekkan',
+    'Kenan Doğulu',
+    'Aşkın Nur Yengi',
+    'Ferdi Özbeğen',
+    'Nükhet Duru'
+  ],
+  'mirkelam': [
+    'Kenan Doğulu',
+    'Levent Yüksel',
+    'Çelik',
+    'Burak Kut',
+    'Mustafa Sandal'
+  ],
+  'çelik': [
+    'Kenan Doğulu',
+    'Harun Kolçak',
+    'Bendeniz',
+    'Mirkelam',
+    'Burak Kut',
+    'Mustafa Sandal'
+  ],
+
   // Arabesk & Damar
   'müslüm gürses': ['Ferdi Tayfur', 'Bergen', 'Azer Bülbül', 'Cengiz Kurtoğlu', 'Orhan Gencebay', 'Ebru Gündeş', 'Ahmet Kaya'],
   'ferdi tayfur': ['Müslüm Gürses', 'Bergen', 'Azer Bülbül', 'Cengiz Kurtoğlu', 'Orhan Gencebay', 'İbrahim Tatlıses'],
   'bergen': ['Müslüm Gürses', 'Ferdi Tayfur', 'Güllü', 'Kibariye', 'Cengiz Kurtoğlu', 'Ebru Gündeş'],
   'azer bülbül': ['Müslüm Gürses', 'Ferdi Tayfur', 'Hakan Taşıyan', 'Bergen', 'Ahmet Kaya', 'Güllü'],
-  'cengiz kurtoğlu': ['Ümit Besen', 'Müslüm Gürses', 'Ferdi Tayfur', 'Hakan Altun', 'Coşkun Sabah', 'Arif Susam'],
   'ibrahim tatlıses': ['Müslüm Gürses', 'Ferdi Tayfur', 'Mahsun Kırmızıgül', 'Ebru Gündeş', 'Sibel Can'],
   'ahmet kaya': ['Müslüm Gürses', 'Selda Bağcan', 'Edip Akbayram', 'Grup Yorum', 'Cevdet Bağca', 'Deniz Koyuncu'],
   'ebru gündeş': ['Sibel Can', 'Yıldız Tilbe', 'Müslüm Gürses', 'Gülben Ergen', 'Zara', 'Linet'],
   'yıldız tilbe': ['Sezen Aksu', 'Sıla', 'Müslüm Gürses', 'Ebru Gündeş', 'Ceylan Ertem', 'Hakan Altun'],
   'hakan altun': ['Cengiz Kurtoğlu', 'Yıldız Tilbe', 'Ümit Besen', 'Serdar Ortaç', 'Baha'],
-  'ümit besen': ['Cengiz Kurtoğlu', 'Ferdi Tayfur', 'Arif Susam', 'Coşkun Sabah', 'Hakan Altun'],
 
   // Türkçe Rock & Anadolu Rock
   'duman': ['Mor ve Ötesi', 'Şebnem Ferah', 'Teoman', 'Adamlar', 'Madrigal', 'Yüzyüzeyken Konuşuruz', 'Athena', 'Kaan Tangöze'],
@@ -56,7 +329,7 @@ export const ARTIST_SIMILARITY_GRAPH: Record<string, string[]> = {
   'yüzyüzeyken konuşuruz': ['Adamlar', 'Dolu Kadehi Ters Tut', 'Madrigal', 'Son Feci Bisiklet', 'Yaşlı Amca', 'DKTT'],
   'madrigal': ['Adamlar', 'Yüzyüzeyken Konuşuruz', 'Dolu Kadehi Ters Tut', 'Dedublüman', 'KÖFN', 'Pinhani'],
   'pinhani': ['Madrigal', 'Mor ve Ötesi', 'Duman', 'Yüksek Sadakat', 'Gripin', 'Zakkum'],
-  'dedublüman': ['Madrigal', 'Yüzyüzeyken Konuşuruz', 'Adamlar', 'Pinhani', 'Mavzer Tabancası', 'KÖFN'],
+  'dedublüman': ['Madrigal', 'Yüzyüzeyken Konuşuruz', 'Adamlar', 'Pinhani', 'Mavzer Tabancası'],
   'dolu kadehi ters tut': ['Adamlar', 'Yüzyüzeyken Konuşuruz', 'Madrigal', 'Büyük Ev Ablukada', 'Yaşlı Amca'],
   'yaşlı amca': ['Adamlar', 'Yüzyüzeyken Konuşuruz', 'Son Feci Bisiklet', 'Dolu Kadehi Ters Tut', 'Madrigal'],
 
@@ -72,30 +345,22 @@ export const ARTIST_SIMILARITY_GRAPH: Record<string, string[]> = {
   'ati242': ['Motive', 'UZI', 'Batuflex', 'Lvbel C5', 'Ezhel'],
   'cakal': ['Reckol', 'UZI', 'BLOK3', 'Lvbel C5', 'Motive'],
 
-  // Türkçe Pop & Alternatif
+  // 2020'ler Modern Türkçe Pop & Alternatif (Mabel Matiz, Mert Demir, KÖFN vb.)
   'mert demir': ['Mabel Matiz', 'Semicenk', 'Simge', 'KÖFN', 'Emir Can İğrek', 'Zeynep Bastık', 'Melike Şahin'],
   'mabel matiz': ['Mert Demir', 'Semicenk', 'KÖFN', 'Göksel', 'Sıla', 'Ceylan Ertem', 'Melike Şahin', 'Edis'],
   'semicenk': ['Mert Demir', 'Doğu Swag', 'Rast', 'Burak Bulut', 'Kurtuluş Kuş', 'Simge', 'Reynmen'],
   'simge': ['Mert Demir', 'Edis', 'Merve Özbey', 'İrem Derici', 'Zeynep Bastık', 'Hadise', 'Derya Uluğ'],
   'tarkan': ['Kenan Doğulu', 'Mustafa Sandal', 'Murat Boz', 'Edis', 'Yalın', 'Burak Kut'],
-  'sezen aksu': ['Sertab Erener', 'Levent Yüksel', 'Nilüfer', 'Aşkın Nur Yengi', 'Sıla', 'Nükhet Duru', 'Candan Erçetin', 'Yıldız Tilbe', 'Göksel', 'Zuhal Olcay', 'Harun Kolçak', 'Leman Sam'],
-  'sertab erener': ['Sezen Aksu', 'Levent Yüksel', 'Aşkın Nur Yengi', 'Şebnem Ferah', 'Nilüfer', 'Demir Demirkan', 'Sıla'],
-  'levent yüksel': ['Sezen Aksu', 'Sertab Erener', 'Aşkın Nur Yengi', 'Yaşar', 'Harun Kolçak', 'Mirkelam', 'Fatih Erkoç'],
-  'nilüfer': ['Sezen Aksu', 'Kayahan', 'Ajda Pekkan', 'Nükhet Duru', 'Aşkın Nur Yengi', 'Zerrin Özer'],
-  'aşkın nur yengi': ['Sezen Aksu', 'Sertab Erener', 'Levent Yüksel', 'Harun Kolçak', 'Nilüfer', 'Zerrin Özer'],
   'sıla': ['Sezen Aksu', 'Mabel Matiz', 'Göksel', 'Sertab Erener', 'Ceylan Ertem', 'Simge', 'Yıldız Tilbe'],
   'göksel': ['Mabel Matiz', 'Sıla', 'Nilüfer', 'Sezen Aksu', 'Candan Erçetin', 'Zuhal Olcay', 'Nükhet Duru'],
-  'candan erçetin': ['Sezen Aksu', 'Göksel', 'Zuhal Olcay', 'Leman Sam', 'Yeni Türkü', 'Ezginin Günlüğü'],
   'kayahan': ['Nilüfer', 'Sezen Aksu', 'Fikret Kızılok', 'Barış Manço', 'İlhan İrem'],
-  'yaşar': ['Levent Yüksel', 'Baha', 'Ege', 'Çelik', 'Harun Kolçak', 'Ferda Anıl Yarkın'],
   'edis': ['Tarkan', 'Mert Demir', 'Simge', 'Zeynep Bastık', 'Murat Boz', 'Gülşen'],
   'emir can iğrek': ['Mert Demir', 'Mabel Matiz', 'KÖFN', 'Dedublüman', 'Madrigal', 'Pinhani'],
   'melike şahin': ['Mabel Matiz', 'Mert Demir', 'Ceylan Ertem', 'Gaye Su Akyol', 'Evrencan Gündüz'],
   'zeynep bastık': ['Mert Demir', 'Edis', 'Simge', 'Emir Can İğrek', 'Anıl Piyancı', 'KÖFN'],
   'köfn': ['Mert Demir', 'Mabel Matiz', 'Simge', 'Dedublüman', 'Madrigal', 'Emir Can İğrek'],
-  'kenan doğulu': ['Tarkan', 'Mustafa Sandal', 'Murat Boz', 'Yalın', 'Ozan Doğulu', 'Sertab Erener'],
 
-  // Global Hits & Synthwave & Pop
+  // Global Hits & Synthwave
   'the weeknd': ['Daft Punk', 'Kavinsky', 'Bruno Mars', 'Post Malone', 'Drake', 'Dua Lipa'],
   'daft punk': ['The Weeknd', 'Kavinsky', 'Justice', 'Gorillaz', 'Empire of the Sun', 'M83'],
   'kavinsky': ['The Weeknd', 'Daft Punk', 'Lazerhawk', 'Carpenter Brut', 'Perturbator', 'Miami Nights 1984'],
@@ -117,43 +382,156 @@ export function getRelatedArtists(artistName: string): string[] {
 }
 
 /**
- * Anti-Monopoly & Artist Diversity Filter
- * - Enforces strict maximum songs per artist (e.g. max 2 per artist, including seed)
- * - Interleaves tracks so no two consecutive songs are ever by the same artist
+ * Robust cleaner that strips YouTube artifacts, channel handles, and downloader prefixes:
+ * - @Romantikmusik, @channel
+ * - y2mate.com, snaptube, ssyoutube
+ * - (Official Video), [Lyrics], 4K, HD, etc.
+ * - Uploader spam: "Bunlar firavun...", "dinle", etc.
+ */
+export function sanitizeTrackTitleAndArtist(rawTitle: string, rawArtist: string): { title: string; artist: string } {
+  let title = (rawTitle || '').trim();
+  let artist = (rawArtist || '').trim();
+
+  // 1. Remove downloader stamps
+  title = title.replace(/^(?:y2mate(?:\.com)?|snaptube|ssyoutube|mp3clan|tubidy)\s*[-_:]*\s*/gi, '');
+  title = title.replace(/\s*[-_:]*\s*(?:y2mate(?:\.com)?|snaptube|ssyoutube|mp3clan)\s*$/gi, '');
+  artist = artist.replace(/^(?:y2mate(?:\.com)?|snaptube|ssyoutube|mp3clan|tubidy)\s*[-_:]*\s*/gi, '');
+
+  // 2. Strip social/channel handles like @Romantikmusik
+  title = title.replace(/@[\w\.\-]+(?:\s*[-_:]*\s*|\b)/gi, '');
+  artist = artist.replace(/@[\w\.\-]+(?:\s*[-_:]*\s*|\b)/gi, '');
+
+  // 3. Detect if artist is clearly a YouTube channel name or junk uploader
+  const isJunkArtist =
+    !artist ||
+    /^(?:sanatçı|artist|unknown|youtube|spotify|vevo|official|music|records|audio|levent ayyıldız|bunlar firavun|y2mate)/i.test(artist) ||
+    artist.length > 35;
+
+  // If title has "Artist - Song" or "Artist - Song - Comment", extract real artist and song
+  if (title.includes(' - ')) {
+    const parts = title.split(' - ').map(p => p.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      if (isJunkArtist) {
+        artist = parts[0];
+        title = parts[1];
+      } else if (parts[0].toLowerCase().includes(artist.toLowerCase())) {
+        title = parts.slice(1).join(' - ');
+      }
+    }
+  }
+
+  // 4. Also handle "Artist.Song" concatenated format
+  if (title.includes('.') && isJunkArtist) {
+    const dotParts = title.split('.').map(p => p.trim()).filter(Boolean);
+    if (dotParts.length >= 2 && dotParts[0].length >= 3 && dotParts[0].length <= 25) {
+      artist = dotParts[0];
+      title = dotParts.slice(1).join(' ');
+    }
+  }
+
+  // 5. Strip YouTube tags, brackets, and phrases
+  title = title
+    .replace(/\s*[\(\[](?:feat\.|ft\.|with|official|resmi|lyric|lyrics|video|klip|audio|remastered|remaster|live|canlı|akustik|acoustic|deluxe|bonus|edit|radio edit|hd|4k|hq|sözleriyle|orijinal|kayıt|plak).*?[\)\]]/gi, '')
+    .replace(/\s*-\s*(?:Single|Live|Remastered|Remaster|Acoustic|Bonus Track|Original Mix|Edit|Radio Edit|Instrumental|Karaoke|Official).*$/i, '')
+    .replace(/\s*[-_:]+\s*(?:bunlar firavun|dinle|full albüm|kesintisiz|albüm).*$/gi, '')
+    .replace(/\.(?:mp3|mp4|m4a|wav|flac|ogg)$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  artist = artist
+    .replace(/\s*[\(\[](?:feat\.|ft\.|with|official|records|topic).*?[\)\]]/gi, '')
+    .replace(/\s*-\s*Topic$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!title) title = rawTitle.trim();
+  if (!artist) artist = rawArtist.trim() || 'Sanatçı';
+
+  return { title, artist };
+}
+
+/**
+ * Returns a normalized canonical key for a track to prevent exact and near duplicate songs.
+ * Strips punctuation, Turkish diacritics, and spaces.
+ * e.g. "Gündüzüm Seninle" -> "gunduzumseninle"
+ */
+export function getCanonicalSongKey(title: string, _artist?: string): string {
+  return (title || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * Spotify-Grade Artist Spacing & Anti-Monopoly Filter:
+ * - Prevents any single artist from monopolizing the radio (seed artist max 3 across 15 tracks).
+ * - Enforces spacing between appearances of the same artist (at least 3 intervening songs).
+ * - Strictly forbids ANY consecutive songs by the same artist!
+ * - Deduplicates songs using canonical song keys so no track is ever repeated.
  */
 export function applyArtistDiversityFilter(
   tracks: Track[],
   seedArtist?: string,
-  maxPerArtist: number = 2
+  maxPerArtist: number = 2,
+  minArtistSpacing: number = 3
 ): Track[] {
   if (!Array.isArray(tracks) || tracks.length <= 1) return tracks;
 
   const normalizedSeed = (seedArtist || '').toLowerCase().trim();
+  const seenSongKeys = new Set<string>();
   const artistCounts = new Map<string, number>();
-  const accepted: Track[] = [];
+  const sanitizedList: Track[] = [];
 
   for (const track of tracks) {
-    const rawArtist = track.artist || '';
-    const normArtist = rawArtist.toLowerCase().trim();
-    const count = artistCounts.get(normArtist) || 0;
-    const isSeed = normalizedSeed && (normArtist.includes(normalizedSeed) || normalizedSeed.includes(normArtist));
-    const limit = isSeed ? 2 : maxPerArtist;
+    const { title: cleanTitle, artist: cleanArtist } = sanitizeTrackTitleAndArtist(track.title, track.artist);
+    const songKey = getCanonicalSongKey(cleanTitle);
 
-    if (count < limit) {
-      artistCounts.set(normArtist, count + 1);
-      accepted.push(track);
+    // Block exact or near-duplicate songs
+    if (seenSongKeys.has(songKey)) continue;
+
+    const normArtist = cleanArtist.toLowerCase().trim();
+    const isSeed = normalizedSeed && (normArtist.includes(normalizedSeed) || normalizedSeed.includes(normArtist));
+    const currentCount = artistCounts.get(normArtist) || 0;
+    const maxAllowed = isSeed ? 3 : maxPerArtist;
+
+    if (currentCount < maxAllowed) {
+      seenSongKeys.add(songKey);
+      artistCounts.set(normArtist, currentCount + 1);
+      sanitizedList.push({
+        ...track,
+        title: cleanTitle,
+        artist: cleanArtist
+      });
     }
   }
 
-  // Interleave to guarantee no two consecutive songs are by the same artist
+  // Spotify Spacing Placement:
+  // Interleave tracks so no two consecutive tracks have the same artist,
+  // and maintain minArtistSpacing wherever possible.
   const result: Track[] = [];
-  const pool = [...accepted];
+  const pool = [...sanitizedList];
 
   while (pool.length > 0) {
-    const lastArtist = result.length > 0 ? (result[result.length - 1].artist || '').toLowerCase().trim() : null;
-    let chosenIdx = pool.findIndex(t => (t.artist || '').toLowerCase().trim() !== lastArtist);
-    if (chosenIdx === -1) chosenIdx = 0;
-    result.push(pool.splice(chosenIdx, 1)[0]);
+    const recentArtists = result.slice(-minArtistSpacing).map(t => (t.artist || '').toLowerCase().trim());
+    const lastArtist = recentArtists[recentArtists.length - 1] || null;
+
+    // Find candidate not matching any recent artist
+    let candidateIdx = pool.findIndex(t => {
+      const a = (t.artist || '').toLowerCase().trim();
+      return !recentArtists.includes(a);
+    });
+
+    // Fallback: at least not matching immediate previous artist
+    if (candidateIdx === -1) {
+      candidateIdx = pool.findIndex(t => (t.artist || '').toLowerCase().trim() !== lastArtist);
+    }
+
+    if (candidateIdx === -1) {
+      candidateIdx = 0;
+    }
+
+    result.push(pool.splice(candidateIdx, 1)[0]);
   }
 
   return result;
@@ -166,7 +544,83 @@ export function applyArtistDiversityFilter(
 export function detectTrackTheme(track: { title?: string; artist?: string; genre?: string; album?: string }): ThematicClassification {
   const text = `${track.title || ''} ${track.artist || ''} ${track.genre || ''} ${track.album || ''}`.toLowerCase();
 
-  // 1. Arabesk / Damar / Fantezi / Taverna
+  // 1. 70'ler & 80'ler Nostalji / Taverna & Piyanist (Ferdi Özbeğen, Tanju Okan, Asu Maralman...)
+  if (
+    text.includes('ferdi özbeğen') ||
+    text.includes('ferdi ozbegen') ||
+    text.includes('piyanist') ||
+    text.includes('tanju okan') ||
+    text.includes('asu maralman') ||
+    text.includes('esmeray') ||
+    text.includes('ayla dikmen') ||
+    text.includes('tülay özer') ||
+    text.includes('selami şahin') ||
+    text.includes('ümit besen') ||
+    text.includes('nejat alp') ||
+    text.includes('arif susam') ||
+    text.includes('coşkun sabah') ||
+    text.includes('neşe karaböcek') ||
+    text.includes('gülden karaböcek') ||
+    text.includes('dario moreno') ||
+    text.includes('semiramis pekkan') ||
+    text.includes('ayten alpman') ||
+    text.includes('erol evgin') ||
+    text.includes('zeki müren') ||
+    text.includes('müzeyyen senar') ||
+    text.includes('ilhan şeşen') ||
+    text.includes('arap şükrü') ||
+    text.includes('funda') ||
+    text.includes('elmira rahimova') ||
+    text.includes('mehmet güreli') ||
+    text.includes('pilli bebek') ||
+    text.includes('nostalji') ||
+    text.includes('şanson')
+  ) {
+    return {
+      category: 'turkce_nostalji_taverna',
+      displayName: "70'ler & 80'ler Nostalji / Taverna",
+      badge: '🎹 Piyanist & Nostalji Radyosu',
+      color: 'text-amber-400 bg-amber-500/10 border-amber-500/30'
+    };
+  }
+
+  // 2. 90'lar Altın Çağ Türkçe Pop Klasikleri (Kenan Doğulu, Levent Yüksel, Sezen Aksu 90lar...)
+  if (
+    text.includes('kenan doğulu') ||
+    text.includes('kurşun adres sormaz') ||
+    text.includes('kursun adres sormaz') ||
+    text.includes('levent yüksel') ||
+    text.includes('med cezir') ||
+    text.includes('harun kolçak') ||
+    text.includes('gir kanıma') ||
+    text.includes('aşkın nur yengi') ||
+    text.includes('yalancı bahar') ||
+    text.includes('bendeniz') ||
+    text.includes('gönül yorgunu') ||
+    text.includes('yaşar') ||
+    text.includes('kumralım') ||
+    text.includes('mirkelam') ||
+    text.includes('her gece') ||
+    text.includes('candan erçetin') ||
+    text.includes('fatih erkoç') ||
+    text.includes('çelik') ||
+    text.includes('hercai') ||
+    text.includes('burak kut') ||
+    text.includes('kaybolan yıllar') ||
+    text.includes('90lar') ||
+    text.includes('doksanlar') ||
+    text.includes('yonca evcimik') ||
+    text.includes('izel')
+  ) {
+    return {
+      category: 'turkce_90lar_pop',
+      displayName: "90'lar Altın Çağ Türkçe Pop",
+      badge: "📻 90'lar Pop Radyosu",
+      color: 'text-rose-400 bg-rose-500/10 border-rose-500/30'
+    };
+  }
+
+  // 3. Arabesk / Damar / Fantezi
   if (
     text.includes('müslüm') ||
     text.includes('ferdi tayfur') ||
@@ -181,13 +635,11 @@ export function detectTrackTheme(track: { title?: string; artist?: string; genre
     text.includes('hakan taşıyan') ||
     text.includes('kibariye') ||
     text.includes('güllü') ||
-    text.includes('ümit besen') ||
     text.includes('selahattin özdemir') ||
     text.includes('hakkı bulut') ||
     text.includes('neşet ertaş') ||
     text.includes('arabesk') ||
     text.includes('damar') ||
-    text.includes('taverna') ||
     text.includes('fantezi') ||
     text.includes('alaturka')
   ) {
@@ -199,7 +651,7 @@ export function detectTrackTheme(track: { title?: string; artist?: string; genre
     };
   }
 
-  // 2. Türkçe Rock & Anadolu Rock
+  // 4. Türkçe Rock & Anadolu Rock
   if (
     text.includes('duman') ||
     text.includes('mor ve ötesi') ||
@@ -231,7 +683,7 @@ export function detectTrackTheme(track: { title?: string; artist?: string; genre
     };
   }
 
-  // 3. Türkçe Rap & Hip-Hop
+  // 5. Türkçe Rap & Hip-Hop
   if (
     text.includes('ezhel') ||
     text.includes('ceza') ||
@@ -260,7 +712,7 @@ export function detectTrackTheme(track: { title?: string; artist?: string; genre
     };
   }
 
-  // 4. Synthwave & 80s Retro
+  // 6. Synthwave & 80s Retro
   if (
     text.includes('the weeknd') ||
     text.includes('kavinsky') ||
@@ -279,7 +731,7 @@ export function detectTrackTheme(track: { title?: string; artist?: string; genre
     };
   }
 
-  // 5. Lo-Fi & Chill
+  // 7. Lo-Fi & Chill
   if (
     text.includes('wys') ||
     text.includes('kupla') ||
@@ -297,7 +749,7 @@ export function detectTrackTheme(track: { title?: string; artist?: string; genre
     };
   }
 
-  // 6. Workout EDM
+  // 8. Workout EDM
   if (
     text.includes('neffex') ||
     text.includes('tevvez') ||
@@ -315,7 +767,7 @@ export function detectTrackTheme(track: { title?: string; artist?: string; genre
     };
   }
 
-  // 7. Türkçe Pop
+  // 9. 2020'ler Modern Türkçe Pop & Akustik (Mert Demir, Mabel Matiz, KÖFN vb.)
   if (
     text.includes('mert demir') ||
     text.includes('mabel matiz') ||
@@ -324,7 +776,6 @@ export function detectTrackTheme(track: { title?: string; artist?: string; genre
     text.includes('sezen aksu') ||
     text.includes('simge') ||
     text.includes('edis') ||
-    text.includes('kenan doğulu') ||
     text.includes('zeynep bastık') ||
     text.includes('semicenk') ||
     text.includes('gülşen') ||
@@ -497,11 +948,16 @@ export async function fetchThematicSongRadio(
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data.tracks) && data.tracks.length > 0) {
-        const freshServerTracks = data.tracks.filter(
-          (t: Track) => !excludeSet.has(t.title.toLowerCase().trim()) && !excludeSet.has(t.id.toLowerCase().trim())
-        );
+        const freshServerTracks = data.tracks
+          .map((t: Track) => {
+            const { title: cleanTitle, artist: cleanArtist } = sanitizeTrackTitleAndArtist(t.title, t.artist);
+            return { ...t, title: cleanTitle, artist: cleanArtist };
+          })
+          .filter(
+            (t: Track) => !excludeSet.has(t.title.toLowerCase().trim()) && !excludeSet.has(t.id.toLowerCase().trim())
+          );
         if (freshServerTracks.length >= Math.min(count, 4)) {
-          const diversified = applyArtistDiversityFilter(freshServerTracks, seedTrack.artist, 2);
+          const diversified = applyArtistDiversityFilter(freshServerTracks, seedTrack.artist, 2, 3);
           return {
             radioTitle: data.radioTitle || `📻 ${seedTrack.artist || seedTrack.title} Radyosu`,
             themeName: classification.displayName,
@@ -516,85 +972,86 @@ export async function fetchThematicSongRadio(
     console.warn('Song Radio online API failed, executing client-side related artist query:', err);
   }
 
-  // 2. Client-side Spotify-like Peer Artist Query with strict diversity guard
-  const related = getRelatedArtists(seedTrack.artist);
-  // Shuffle related peers so sequential radio replenishments explore different artists
-  const shuffledPeers = [...related].sort(() => Math.random() - 0.5);
-  const searchQueries = [
-    ...shuffledPeers.slice(0, 5),
-    seedTrack.artist,
-    classification.displayName
-  ].filter(Boolean);
-
+  // 2. Client-side Curated Match from POPULAR_ORIGINAL_HITS
   const radioTracks: Track[] = [];
-  const seenIds = new Set<string>();
-  const artistCounts = new Map<string, number>();
+  const seenSongKeys = new Set<string>();
+  const seedSongKey = getCanonicalSongKey(seedTrack.title);
+  seenSongKeys.add(seedSongKey);
 
-  for (const query of searchQueries) {
+  // First, extract high-scoring peer tracks from curated POPULAR_ORIGINAL_HITS
+  const curatedCandidates = POPULAR_ORIGINAL_HITS
+    .map(popTrack => {
+      const { title: cleanTitle, artist: cleanArtist } = sanitizeTrackTitleAndArtist(popTrack.title, popTrack.artist);
+      const sanitized = { ...popTrack, title: cleanTitle, artist: cleanArtist };
+      const affinity = scoreTrackAffinity(seedTrack, sanitized, false);
+      return { track: sanitized, affinity };
+    })
+    .filter(item => {
+      const sKey = getCanonicalSongKey(item.track.title);
+      return (
+        item.affinity.score > 35 &&
+        !seenSongKeys.has(sKey) &&
+        !excludeSet.has(item.track.id.toLowerCase().trim()) &&
+        !excludeSet.has(item.track.title.toLowerCase().trim())
+      );
+    })
+    .sort((a, b) => b.affinity.score - a.affinity.score);
+
+  for (const item of curatedCandidates) {
     if (radioTracks.length >= count) break;
-    try {
-      const found = await searchUniversalTracks(query);
-      for (const t of found) {
-        if (radioTracks.length >= count) break;
-        const normTitle = t.title.toLowerCase().trim();
-        const normId = t.id.toLowerCase().trim();
-        const normArtist = (t.artist || '').toLowerCase().trim();
-        const currentCount = artistCounts.get(normArtist) || 0;
-
-        // Strict limit: at most 2 per artist
-        if (currentCount >= 2) continue;
-
-        if (
-          !seenIds.has(normId) &&
-          !excludeSet.has(normId) &&
-          !excludeSet.has(normTitle) &&
-          !normTitle.includes(seedTrack.title.toLowerCase().trim())
-        ) {
-          // Verify theme consistency: reject cross-genre clashes
-          const affinity = scoreTrackAffinity(seedTrack, t, false);
-          if (affinity.score > 20) {
-            seenIds.add(normId);
-            artistCounts.set(normArtist, currentCount + 1);
-            radioTracks.push({
-              ...t,
-              isSmartRecommendation: true,
-              recommendationReason: affinity.reason || `${seedTrack.artist} sounduna uygun Spotify radyo akışı`,
-              matchScore: Math.min(99, Math.max(90, Math.round(affinity.score > 70 ? affinity.score : 92)))
-            });
-          }
-        }
-      }
-    } catch {}
+    const sKey = getCanonicalSongKey(item.track.title);
+    seenSongKeys.add(sKey);
+    radioTracks.push({
+      ...item.track,
+      isSmartRecommendation: true,
+      recommendationReason: item.affinity.reason || `${classification.displayName} ekolüyle uyumlu`,
+      matchScore: Math.min(99, Math.max(90, Math.round(item.affinity.score > 70 ? item.affinity.score : 94)))
+    });
   }
 
-  // 3. Fallback from POPULAR_ORIGINAL_HITS if under quota
+  // 3. If more tracks are needed, query searchUniversalTracks with related peers
   if (radioTracks.length < count) {
-    for (const popTrack of POPULAR_ORIGINAL_HITS) {
-      if (radioTracks.length >= count) break;
-      const normTitle = popTrack.title.toLowerCase().trim();
-      const normId = popTrack.id.toLowerCase().trim();
-      const normArtist = (popTrack.artist || '').toLowerCase().trim();
-      const currentCount = artistCounts.get(normArtist) || 0;
-      if (currentCount >= 2) continue;
+    const related = getRelatedArtists(seedTrack.artist);
+    const shuffledPeers = [...related].sort(() => Math.random() - 0.5);
+    const searchQueries = [
+      ...shuffledPeers.slice(0, 4),
+      seedTrack.artist,
+      classification.displayName
+    ].filter(Boolean);
 
-      if (!seenIds.has(normId) && !excludeSet.has(normId) && !excludeSet.has(normTitle)) {
-        const affinity = scoreTrackAffinity(seedTrack, popTrack, false);
-        if (affinity.score > 20) {
-          seenIds.add(normId);
-          artistCounts.set(normArtist, currentCount + 1);
-          radioTracks.push({
-            ...popTrack,
-            isSmartRecommendation: true,
-            recommendationReason: affinity.reason || `${classification.displayName} temasıyla uyumlu`,
-            matchScore: 94
-          });
+    for (const query of searchQueries) {
+      if (radioTracks.length >= count) break;
+      try {
+        const found = await searchUniversalTracks(query);
+        for (const t of found) {
+          if (radioTracks.length >= count) break;
+          const { title: cleanTitle, artist: cleanArtist } = sanitizeTrackTitleAndArtist(t.title, t.artist);
+          const sKey = getCanonicalSongKey(cleanTitle);
+
+          if (
+            !seenSongKeys.has(sKey) &&
+            !excludeSet.has(t.id.toLowerCase().trim()) &&
+            !excludeSet.has(cleanTitle.toLowerCase().trim())
+          ) {
+            const cleanTrack = { ...t, title: cleanTitle, artist: cleanArtist };
+            const affinity = scoreTrackAffinity(seedTrack, cleanTrack, false);
+            if (affinity.score > 35) {
+              seenSongKeys.add(sKey);
+              radioTracks.push({
+                ...cleanTrack,
+                isSmartRecommendation: true,
+                recommendationReason: affinity.reason || `${seedTrack.artist} tarzına uygun radyo akışı`,
+                matchScore: Math.min(99, Math.max(90, Math.round(affinity.score > 70 ? affinity.score : 92)))
+              });
+            }
+          }
         }
-      }
+      } catch {}
     }
   }
 
-  // Apply final diversity filter: caps artist frequency and interleaves so no two consecutive are by the same artist
-  const diversifiedTracks = applyArtistDiversityFilter(radioTracks, seedTrack.artist, 2);
+  // Apply final diversity filter: caps artist frequency, enforces spacing, and prevents consecutive same-artist tracks
+  const diversifiedTracks = applyArtistDiversityFilter(radioTracks, seedTrack.artist, 2, 3);
 
   return {
     radioTitle: `📻 ${seedTrack.artist || seedTrack.title} Radyosu`,
@@ -903,11 +1360,14 @@ export function scoreTrackAffinity(
 
   // 1. Strict Theme / Genre Consistency (Spotify rule: avoid cross-genre jarring shifts)
   if (currentTheme.category === candidateTheme.category && currentTheme.category !== 'general') {
-    score += 70;
+    score += 85;
     isSameGenre = true;
     reason = `${currentTheme.displayName} temasıyla kusursuz uyum`;
   } else if (
-    (currentTheme.category === 'arabesk_damar' && (candidateTheme.category === 'workout_edm' || candidateTheme.category === 'turkce_rap' || candidateTheme.category === 'synthwave_retro')) ||
+    (currentTheme.category === 'turkce_90lar_pop' && (candidateTheme.category === 'turkce_pop' || candidateTheme.category === 'turkce_rap' || candidateTheme.category === 'workout_edm')) ||
+    (currentTheme.category === 'turkce_nostalji_taverna' && (candidateTheme.category === 'turkce_pop' || candidateTheme.category === 'turkce_rap' || candidateTheme.category === 'workout_edm')) ||
+    (currentTheme.category === 'turkce_pop' && (candidateTheme.category === 'turkce_nostalji_taverna' || candidateTheme.category === 'arabesk_damar')) ||
+    (currentTheme.category === 'arabesk_damar' && (candidateTheme.category === 'workout_edm' || candidateTheme.category === 'turkce_rap' || candidateTheme.category === 'synthwave_retro' || candidateTheme.category === 'turkce_pop')) ||
     (currentTheme.category === 'workout_edm' && candidateTheme.category === 'arabesk_damar') ||
     (currentTheme.category === 'lofi_chill' && candidateTheme.category === 'workout_edm') ||
     (currentTheme.category === 'turkce_rock' && candidateTheme.category === 'workout_edm')
