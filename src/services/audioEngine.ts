@@ -148,6 +148,35 @@ class AudioEngine {
   private fadeInterval: any = null;
   private isTransitioning = false;
   private crossfadeSeconds = 0;
+  private isOfflineOnlyMode = false;
+  private currentPlaybackRate = 1.0;
+  private currentAudioSettings: AudioSettings = {
+    volume: 0.85,
+    muted: false,
+    playbackRate: 1.0,
+    crossfade: 0,
+    eqPreset: 'flat',
+    eq10Bands: { b32: 0, b64: 0, b125: 0, b250: 0, b500: 0, b1k: 0, b2k: 0, b4k: 0, b8k: 0, b16k: 0 },
+    eqBands: { bass: 0, midLow: 0, mid: 0, midHigh: 0, treble: 0 },
+    bassBoost: false,
+    subBassBoost: false,
+    spatialAudio: false,
+    spatial8DSpeed: 0.5,
+    vocalRemover: false,
+    volumeNormalization: false,
+    highQualityAudio: true,
+    slowedReverb: false,
+    keepScreenAwake: true,
+    batterySaverMode: false
+  };
+
+  public setOfflineMode(enabled: boolean): void {
+    this.isOfflineOnlyMode = enabled;
+  }
+
+  public getOfflineMode(): boolean {
+    return this.isOfflineOnlyMode;
+  }
 
   // True Shuffle Memory Tracker (guarantees full permutation without repeat)
   private shuffleHistory: string[] = [];
@@ -591,6 +620,15 @@ class AudioEngine {
       this.analyser.connect(this.ctx.destination);
 
       this.isInitialized = true;
+
+      // Immediately restore and apply any active equalizer and audio settings
+      if (this.currentAudioSettings.eq10Bands) {
+        this.set10BandEqualizer(
+          this.currentAudioSettings.eq10Bands,
+          !!this.currentAudioSettings.bassBoost,
+          !!this.currentAudioSettings.subBassBoost
+        );
+      }
     } catch (err) {
       console.warn('Web Audio init note:', err);
     }
@@ -743,11 +781,24 @@ class AudioEngine {
     try {
       const cachedBlob = await getAudioBlobFromCache(track.id);
       if (cachedBlob) {
-        if (this.ytPlayer && this.ytPlayerReady) {
-          try { this.ytPlayer.pauseVideo(); } catch {}
+        // Distinguish verified full tracks (local files, large blob size > 2MB, or natural short tracks)
+        const isVerifiedFullTrack =
+          track.source === 'local' ||
+          !!track.fileBlob ||
+          cachedBlob.size > 2_000_000 ||
+          (track.duration && track.duration <= 45);
+
+        // If user is in offline-only mode, or device is offline (no network), OR the cached track is verified full-length:
+        // Play the cached blob directly via HTML5!
+        if (this.isOfflineOnlyMode || !navigator.onLine || isVerifiedFullTrack) {
+          if (this.ytPlayer && this.ytPlayerReady) {
+            try { this.ytPlayer.pauseVideo(); } catch {}
+          }
+          this.clearYtInterval();
+          return this.playViaHtml5(track, effectiveStart, URL.createObjectURL(cachedBlob));
         }
-        this.clearYtInterval();
-        return this.playViaHtml5(track, effectiveStart, URL.createObjectURL(cachedBlob));
+        // CRITICAL FIX: If online and the cached blob is only a 30s preview clip,
+        // DO NOT play the 30s preview and get stuck! Proceed to step 3 & 4 to resolve and play the full song!
       }
     } catch {}
 
@@ -860,6 +911,7 @@ class AudioEngine {
           startSeconds: startSecs
         });
         this.applyInternalVolume(this.currentEffectiveVolume);
+        this.setPlaybackRate(this.currentPlaybackRate);
         this.ytPlayer.playVideo();
         if (typeof this.ytPlayer.setPlaybackQuality === 'function') {
           try { this.ytPlayer.setPlaybackQuality(this.batterySaverMode ? 'small' : 'medium'); } catch {}
@@ -916,6 +968,7 @@ class AudioEngine {
     }
 
     this.audio.src = audioSrc;
+    this.audio.playbackRate = this.currentPlaybackRate;
     this.applyInternalVolume(this.currentEffectiveVolume);
     this.audio.currentTime = Math.max(0, startTime);
 
@@ -1008,10 +1061,22 @@ class AudioEngine {
 
   public setPlaybackRate(rate: number): void {
     const r = Math.max(0.25, Math.min(2.5, rate));
+    this.currentPlaybackRate = r;
     this.audio.playbackRate = r;
-    if (this.ytPlayer && this.ytPlayer.setPlaybackRate) {
+    this.currentAudioSettings.playbackRate = r;
+    if (this.ytPlayer && typeof this.ytPlayer.setPlaybackRate === 'function') {
       try {
-        this.ytPlayer.setPlaybackRate(r);
+        const ytRates = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+        let closest = 1.0;
+        let minDiff = 999;
+        for (const yr of ytRates) {
+          const diff = Math.abs(yr - r);
+          if (diff < minDiff) {
+            minDiff = diff;
+            closest = yr;
+          }
+        }
+        this.ytPlayer.setPlaybackRate(closest);
       } catch {}
     }
   }
@@ -1019,6 +1084,10 @@ class AudioEngine {
   public setEqualizer(settings: AudioSettings['eqBands'], bassBoost: boolean): void {
     if (!this.isInitialized) this.initWebAudio();
     if (!this.isInitialized) return;
+
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
+    }
 
     // Map 5 bands onto 10 bands if needed
     if (this.eq10Filters.length === 10) {
@@ -1039,10 +1108,19 @@ class AudioEngine {
   }
 
   public set10BandEqualizer(bands: AudioSettings['eq10Bands'], bassBoost: boolean, subBassBoost = false): void {
+    if (!bands) return;
+    this.currentAudioSettings.eq10Bands = { ...bands };
+    this.currentAudioSettings.bassBoost = bassBoost;
+    this.currentAudioSettings.subBassBoost = subBassBoost;
+
     if (!this.isInitialized) this.initWebAudio();
     if (!this.isInitialized) return;
 
-    if (this.eq10Filters.length === 10) {
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
+    }
+
+    if (this.eq10Filters && this.eq10Filters.length === 10) {
       this.eq10Filters[0].gain.value = bands.b32;
       this.eq10Filters[1].gain.value = bands.b64;
       this.eq10Filters[2].gain.value = bands.b125;
@@ -1061,6 +1139,64 @@ class AudioEngine {
     if (this.subBassFilter) {
       this.subBassFilter.gain.value = subBassBoost ? 9 : (bassBoost ? 4 : 0);
     }
+  }
+
+  public applyAudioSettings(settings: Partial<AudioSettings>): void {
+    this.currentAudioSettings = { ...this.currentAudioSettings, ...settings };
+
+    // 1. Volume & Mute
+    if (this.currentAudioSettings.muted) {
+      this.setVolume(0);
+    } else if (this.currentAudioSettings.volume !== undefined) {
+      this.setVolume(this.currentAudioSettings.volume);
+    }
+
+    // 2. Playback Rate
+    if (this.currentAudioSettings.playbackRate !== undefined) {
+      this.setPlaybackRate(this.currentAudioSettings.playbackRate);
+    }
+
+    // 3. 10-Band Equalizer & Bass Boost
+    if (this.currentAudioSettings.eq10Bands) {
+      this.set10BandEqualizer(
+        this.currentAudioSettings.eq10Bands,
+        !!this.currentAudioSettings.bassBoost,
+        !!this.currentAudioSettings.subBassBoost
+      );
+    }
+
+    // 4. Spatial 8D Audio
+    if (this.currentAudioSettings.spatialAudio !== undefined) {
+      this.setSpatialAudio(
+        this.currentAudioSettings.spatialAudio,
+        this.currentAudioSettings.spatial8DSpeed || 0.5
+      );
+    }
+
+    // 5. Vocal Remover Notch Filter
+    if (this.currentAudioSettings.vocalRemover !== undefined) {
+      this.setVocalRemover(this.currentAudioSettings.vocalRemover);
+    }
+
+    // 6. Volume Normalization (Compressor)
+    if (this.currentAudioSettings.volumeNormalization !== undefined) {
+      this.setVolumeNormalization(this.currentAudioSettings.volumeNormalization);
+    }
+
+    // 7. System Preferences
+    if (this.currentAudioSettings.keepScreenAwake !== undefined) {
+      this.setKeepScreenAwake(this.currentAudioSettings.keepScreenAwake);
+    }
+    if (this.currentAudioSettings.batterySaverMode !== undefined) {
+      this.setBatterySaverMode(this.currentAudioSettings.batterySaverMode);
+    }
+    if (this.currentAudioSettings.crossfade !== undefined) {
+      this.setCrossfade(this.currentAudioSettings.crossfade);
+    }
+  }
+
+  public getAudioSettings(): AudioSettings {
+    return { ...this.currentAudioSettings };
   }
 
   public setSpatialAudio(enabled: boolean, speed = 0.5): void {

@@ -140,25 +140,33 @@ export default function App() {
   const [isOfflineMode, setIsOfflineMode] = useState<boolean>(false);
   const [downloadedCount, setDownloadedCount] = useState<number>(0);
 
-  // Audio Settings
-  const [audioSettings, setAudioSettings] = useState<AudioSettings>({
-    volume: 0.85,
-    muted: false,
-    playbackRate: 1.0,
-    crossfade: 0,
-    eqPreset: 'flat',
-    eq10Bands: { b32: 0, b64: 0, b125: 0, b250: 0, b500: 0, b1k: 0, b2k: 0, b4k: 0, b8k: 0, b16k: 0 },
-    eqBands: { bass: 0, midLow: 0, mid: 0, midHigh: 0, treble: 0 },
-    bassBoost: false,
-    subBassBoost: false,
-    spatialAudio: false,
-    spatial8DSpeed: 0.5,
-    vocalRemover: false,
-    volumeNormalization: false,
-    highQualityAudio: true,
-    slowedReverb: false,
-    batterySaverMode: false,
-    keepScreenAwake: false
+  // Audio Settings (persisted across sessions)
+  const [audioSettings, setAudioSettings] = useState<AudioSettings>(() => {
+    try {
+      const saved = localStorage.getItem('soundpulse_audio_settings');
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch {}
+    return {
+      volume: 0.85,
+      muted: false,
+      playbackRate: 1.0,
+      crossfade: 0,
+      eqPreset: 'flat',
+      eq10Bands: { b32: 0, b64: 0, b125: 0, b250: 0, b500: 0, b1k: 0, b2k: 0, b4k: 0, b8k: 0, b16k: 0 },
+      eqBands: { bass: 0, midLow: 0, mid: 0, midHigh: 0, treble: 0 },
+      bassBoost: false,
+      subBassBoost: false,
+      spatialAudio: false,
+      spatial8DSpeed: 0.5,
+      vocalRemover: false,
+      volumeNormalization: false,
+      highQualityAudio: true,
+      slowedReverb: false,
+      batterySaverMode: false,
+      keepScreenAwake: false
+    };
   });
 
   // PWA Install State
@@ -256,6 +264,19 @@ export default function App() {
       saveFoldersToDB(folders);
     }
   }, [folders, isHydrated]);
+
+  // Persist and apply audio settings changes immediately to audioEngine
+  useEffect(() => {
+    try {
+      localStorage.setItem('soundpulse_audio_settings', JSON.stringify(audioSettings));
+    } catch {}
+    audioEngine.applyAudioSettings(audioSettings);
+  }, [audioSettings]);
+
+  // Sync offline mode with audioEngine to protect against preview trapping
+  useEffect(() => {
+    audioEngine.setOfflineMode(isOfflineMode);
+  }, [isOfflineMode]);
 
   // Listen to collaboration events
   useEffect(() => {
@@ -1424,6 +1445,10 @@ export default function App() {
         }}
         onClearAllOffline={handleClearAllOffline}
         onPlayTrack={handlePlayTrack}
+        onPlayTracksShuffled={handlePlayMixedTracks}
+        onAddToQueue={handleAddMixedToQueue}
+        onDownloadSingleTrack={handleDownloadTrackOffline}
+        onCreatePlaylist={handleCreateMixedPlaylist}
       />
 
       <FolderManagerModal
