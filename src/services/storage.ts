@@ -43,27 +43,45 @@ function openDB(): Promise<IDBDatabase> {
 export async function savePlaylistsToDB(playlists: Playlist[]): Promise<void> {
   if (!playlists || playlists.length === 0) return;
 
-  // Always synchronously update localStorage for immediate recovery and tab safety
+  // Clean data to ensure only serializable, clean fields are stored
+  const sanitizedPlaylists: Playlist[] = playlists.map(p => ({
+    ...p,
+    tracks: (p.tracks || []).map(t => {
+      const { fileBlob, ...rest } = t as any;
+      return rest as Track;
+    })
+  }));
+
+  // Synchronous localStorage backup with quota protection
   try {
-    localStorage.setItem('soundpulse_playlists', JSON.stringify(playlists));
+    localStorage.setItem('soundpulse_playlists', JSON.stringify(sanitizedPlaylists));
   } catch (e) {
-    console.warn('localStorage quota warning for playlists', e);
+    try {
+      // If full list exceeds 5MB localStorage quota, store first 50 tracks of each playlist
+      const lightweight = sanitizedPlaylists.map(p => ({
+        ...p,
+        tracks: (p.tracks || []).slice(0, 50)
+      }));
+      localStorage.setItem('soundpulse_playlists', JSON.stringify(lightweight));
+    } catch {}
   }
 
   try {
     const db = await openDB();
-    const tx = db.transaction(STORE_PLAYLISTS, 'readwrite');
-    const store = tx.objectStore(STORE_PLAYLISTS);
-
     await new Promise<void>((resolve, reject) => {
-      const clearReq = store.clear();
-      clearReq.onsuccess = () => resolve();
-      clearReq.onerror = () => reject(clearReq.error);
-    });
+      const tx = db.transaction(STORE_PLAYLISTS, 'readwrite');
+      const store = tx.objectStore(STORE_PLAYLISTS);
 
-    for (const p of playlists) {
-      store.put(p);
-    }
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+
+      // Perform clear and put operations synchronously on the active transaction without interleaving await
+      store.clear();
+      for (const p of sanitizedPlaylists) {
+        store.put(p);
+      }
+    });
   } catch (err) {
     console.error('Failed to save playlists to IndexedDB:', err);
   }
@@ -132,21 +150,25 @@ export async function loadPlaylistsFromDB(): Promise<Playlist[] | null> {
 
 export async function saveFoldersToDB(folders: PlaylistFolder[]): Promise<void> {
   try {
+    localStorage.setItem('soundpulse_folders', JSON.stringify(folders));
+  } catch {}
+
+  try {
     const db = await openDB();
-    const tx = db.transaction(STORE_FOLDERS, 'readwrite');
-    const store = tx.objectStore(STORE_FOLDERS);
-    await new Promise<void>((resolve) => {
-      const clearReq = store.clear();
-      clearReq.onsuccess = () => resolve();
-      clearReq.onerror = () => resolve();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE_FOLDERS, 'readwrite');
+      const store = tx.objectStore(STORE_FOLDERS);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+
+      store.clear();
+      for (const f of folders) {
+        store.put(f);
+      }
     });
-    for (const f of folders) {
-      store.put(f);
-    }
   } catch (err) {
-    try {
-      localStorage.setItem('soundpulse_folders', JSON.stringify(folders));
-    } catch {}
+    console.error('Failed to save folders to IndexedDB:', err);
   }
 }
 

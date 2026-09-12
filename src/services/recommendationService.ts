@@ -361,11 +361,21 @@ export const ARTIST_SIMILARITY_GRAPH: Record<string, string[]> = {
   'köfn': ['Mert Demir', 'Mabel Matiz', 'Simge', 'Dedublüman', 'Madrigal', 'Emir Can İğrek'],
 
   // Global Hits & Synthwave
-  'the weeknd': ['Daft Punk', 'Kavinsky', 'Bruno Mars', 'Post Malone', 'Drake', 'Dua Lipa'],
+  'the weeknd': ['Daft Punk', 'Kavinsky', 'Bruno Mars', 'Post Malone', 'Drake', 'Dua Lipa', 'SZA'],
+  'skepta': ['Che Ecru', 'Drake', 'Stormzy', 'Dave', 'Central Cee', 'The Weeknd', 'Travis Scott', 'B-Young'],
+  'che ecru': ['Skepta', 'Brent Faiyaz', 'PARTYNEXTDOOR', 'Bryson Tiller', 'SZA', 'The Weeknd', 'Steve Lacy'],
+  'sza': ['Summer Walker', 'Jhené Aiko', 'Kehlani', 'Billie Eilish', 'Frank Ocean', 'Steve Lacy', 'Dua Lipa'],
+  'sabrina carpenter': ['Olivia Rodrigo', 'Chappell Roan', 'Dua Lipa', 'Taylor Swift', 'Gracie Abrams', 'Ariana Grande'],
+  'olivia rodrigo': ['Sabrina Carpenter', 'Billie Eilish', 'Taylor Swift', 'Conan Gray', 'Chappell Roan', 'Lorde'],
+  'harry styles': ['Niall Horan', 'Shawn Mendes', 'Louis Tomlinson', 'The Weeknd', 'Bruno Mars', 'Dua Lipa'],
+  'post malone': ['The Weeknd', 'Swae Lee', 'Khalid', 'Juice WRLD', 'Drake', 'Bruno Mars', 'Harry Styles'],
+  'drake': ['The Weeknd', 'Travis Scott', 'Post Malone', 'Kendrick Lamar', '21 Savage', 'PARTYNEXTDOOR', 'Skepta'],
+  'steve lacy': ['Frank Ocean', 'Tyler, The Creator', 'Brent Faiyaz', 'Childish Gambino', 'SZA', 'Dominic Fike'],
+  'bruno mars': ['Anderson .Paak', 'Silk Sonic', 'The Weeknd', 'Mark Ronson', 'Charlie Puth', 'Harry Styles'],
   'daft punk': ['The Weeknd', 'Kavinsky', 'Justice', 'Gorillaz', 'Empire of the Sun', 'M83'],
   'kavinsky': ['The Weeknd', 'Daft Punk', 'Lazerhawk', 'Carpenter Brut', 'Perturbator', 'Miami Nights 1984'],
-  'dua lipa': ['The Weeknd', 'Taylor Swift', 'Billie Eilish', 'Ariana Grande', 'Olivia Rodrigo', 'Lady Gaga'],
-  'billie eilish': ['Lana Del Rey', 'Olivia Rodrigo', 'Finneas', 'Lorde', 'Dua Lipa', 'The Weeknd'],
+  'dua lipa': ['The Weeknd', 'Taylor Swift', 'Billie Eilish', 'Ariana Grande', 'Olivia Rodrigo', 'Sabrina Carpenter'],
+  'billie eilish': ['Lana Del Rey', 'Olivia Rodrigo', 'Finneas', 'Lorde', 'Dua Lipa', 'The Weeknd', 'SZA'],
   'coldplay': ['Imagine Dragons', 'OneRepublic', 'The Script', 'Keane', 'Snow Patrol', 'Maroon 5'],
   'imagine dragons': ['Coldplay', 'OneRepublic', 'Fall Out Boy', 'Twenty One Pilots', 'The Killers']
 };
@@ -543,6 +553,31 @@ export function applyArtistDiversityFilter(
 
 export function detectTrackTheme(track: { title?: string; artist?: string; genre?: string; album?: string }): ThematicClassification {
   const text = `${track.title || ''} ${track.artist || ''} ${track.genre || ''} ${track.album || ''}`.toLowerCase();
+
+  // 0. Global Pop, International R&B & Worldwide Hits (Skepta, Che Ecru, The Weeknd, Dua Lipa, Billie Eilish, SZA, Drake...)
+  const globalArtists = [
+    'skepta', 'che ecru', 'the weeknd', 'dua lipa', 'billie eilish', 'sza', 'sabrina carpenter',
+    'olivia rodrigo', 'harry styles', 'bruno mars', 'post malone', 'drake', 'taylor swift',
+    'kendrick lamar', 'travis scott', 'beyoncé', 'rihanna', 'ed sheeran', 'ariana grande',
+    'justin bieber', 'adele', 'lana del rey', 'coldplay', 'imagine dragons', 'eminem',
+    'kanye west', 'frank ocean', 'brent faiyaz', 'steve lacy', 'daniel caesar', 'joji',
+    'ravyn lenae', 'b-young', 'central cee', 'stormzy', 'dave', 'burna boy', 'tems',
+    'chris brown', 'usher', 'doja cat', 'cardi b', 'megan thee stallion', 'childish gambino',
+    'tate mcrae', 'chappell roan', 'charlie puth', 'shawn mendes', 'sam smith', 'troye sivan'
+  ];
+  const hasTurkishLetters = /[çğıöşü]/i.test(`${track.title || ''} ${track.artist || ''}`);
+  const isGlobalArtist = globalArtists.some(a => text.includes(a));
+  const isEnglishKeywords = /\b(love|not|me|you|dont|cant|heart|night|girl|boy|baby|time|summer|dance|like|feel|never|kiss|sun|feather|espresso|taste|vampire|birds|blinding|lights|starboy|snooze|circles|stay|flowers|bad)\b/i.test(track.title || '');
+  const isGlobalGenre = /global|international|r&b|hip\s*hop|pop\s*\/\s*r&b|synthpop|dance\s*pop|indie\s*pop/i.test(track.genre || '') && !/türkçe|turkish/i.test(track.genre || '');
+
+  if ((isGlobalArtist || (isEnglishKeywords && !hasTurkishLetters) || (isGlobalGenre && !hasTurkishLetters)) && !text.includes('türkçe') && !text.includes('turkce')) {
+    return {
+      category: 'global_pop',
+      displayName: 'Global Pop & International Hits',
+      badge: '🌍 Global Hit Radyosu',
+      color: 'text-sky-400 bg-sky-500/10 border-sky-500/30'
+    };
+  }
 
   // 1. 70'ler & 80'ler Nostalji / Taverna & Piyanist (Ferdi Özbeğen, Tanju Okan, Asu Maralman...)
   if (
@@ -995,7 +1030,14 @@ export async function fetchThematicSongRadio(
         !excludeSet.has(item.track.title.toLowerCase().trim())
       );
     })
-    .sort((a, b) => b.affinity.score - a.affinity.score);
+    // Spotify-style non-deterministic dynamic shuffling within high-affinity tiers (adds natural freshness)
+    .sort((a, b) => {
+      const scoreDiff = b.affinity.score - a.affinity.score;
+      if (Math.abs(scoreDiff) < 15) {
+        return Math.random() - 0.5;
+      }
+      return scoreDiff;
+    });
 
   for (const item of curatedCandidates) {
     if (radioTracks.length >= count) break;
@@ -1359,6 +1401,36 @@ export function scoreTrackAffinity(
   let isSameGenre = false;
 
   // 1. Strict Theme / Genre Consistency (Spotify rule: avoid cross-genre jarring shifts)
+  const isCurrentGlobal = currentTheme.category === 'global_pop';
+  const isCandidateGlobal = candidateTheme.category === 'global_pop';
+  const isTurkishRegional =
+    candidateTheme.category === 'turkce_nostalji_taverna' ||
+    candidateTheme.category === 'arabesk_damar' ||
+    candidateTheme.category === 'turkce_90lar_pop' ||
+    candidateTheme.category === 'turkce_pop' ||
+    candidateTheme.category === 'turkce_rock';
+
+  if (isCurrentGlobal && isTurkishRegional) {
+    // Culture clash penalty: NEVER suggest Turkish nostalji/arabesk/pop for Global Pop seed!
+    return {
+      track: candidate,
+      score: -1000,
+      reason: 'Kültür ve müzik ekolü uyuşmazlığı (Global Pop vs Türkçe)',
+      isPeerArtist: false,
+      isSameGenre: false
+    };
+  }
+
+  if (!isCurrentGlobal && currentTheme.category !== 'general' && isCandidateGlobal && (currentTheme.category === 'turkce_nostalji_taverna' || currentTheme.category === 'arabesk_damar')) {
+    return {
+      track: candidate,
+      score: -1000,
+      reason: 'Kültür ve müzik ekolü uyuşmazlığı',
+      isPeerArtist: false,
+      isSameGenre: false
+    };
+  }
+
   if (currentTheme.category === candidateTheme.category && currentTheme.category !== 'general') {
     score += 85;
     isSameGenre = true;

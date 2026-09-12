@@ -103,6 +103,7 @@ class AudioEngine {
   private wakeLock: any = null;
   private keepScreenAwake = false; // Default FALSE to prevent mobile phone overheating and battery drain
   private batterySaverMode = true; // Eco mode: 144p/small stream decoding, throttled animations
+  private isUserPaused = false; // Distinguishes explicit user pause from transient buffer/transition states
 
   public setScreenAwakePreference(awake: boolean): void {
     this.keepScreenAwake = awake;
@@ -207,14 +208,43 @@ class AudioEngine {
     this.initYouTube().catch(() => {});
   }
 
-  // Silent audio keep-alive & Web Audio pipeline to keep mobile browsers (Opera, Chrome, iOS) active in background
+  // Continuous non-zero PCM keep-alive loop to prevent mobile OS (iOS/Android/Chrome) from killing the audio pipeline in background
   private initSilentKeepAlive() {
     try {
-      // High-compatibility silent WAV loop
-      const silentWav = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
-      this.silentAudio = new Audio(silentWav);
+      // 2-second 8kHz mono WAV with inaudible ±1 LSB PCM dither that keeps hardware audio clocks active
+      const sampleRate = 8000;
+      const numSamples = sampleRate * 2;
+      const buffer = new Uint8Array(44 + numSamples);
+      buffer.set([0x52, 0x49, 0x46, 0x46], 0); // RIFF
+      const view = new DataView(buffer.buffer);
+      view.setUint32(4, 36 + numSamples, true);
+      buffer.set([0x57, 0x41, 0x56, 0x45], 8); // WAVE
+      buffer.set([0x66, 0x6d, 0x74, 0x20], 12); // fmt 
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true); // PCM format
+      view.setUint16(22, 1, true); // 1 channel
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate, true);
+      view.setUint16(32, 1, true);
+      view.setUint16(34, 8, true); // 8-bit
+      buffer.set([0x64, 0x61, 0x74, 0x61], 36); // data
+      view.setUint32(40, numSamples, true);
+
+      // Alternating micro-energy (inaudible, but valid PCM frames for OS audio decoders)
+      for (let i = 0; i < numSamples; i++) {
+        buffer[44 + i] = 128 + (i % 2 === 0 ? 1 : -1);
+      }
+
+      let binary = '';
+      const len = buffer.byteLength;
+      for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(buffer[i]);
+      }
+      const inaudibleWav = 'data:audio/wav;base64,' + btoa(binary);
+
+      this.silentAudio = new Audio(inaudibleWav);
       this.silentAudio.loop = true;
-      this.silentAudio.volume = 0.001;
+      this.silentAudio.volume = 0.01;
       this.silentAudio.setAttribute('playsinline', 'true');
       this.silentAudio.setAttribute('webkit-playsinline', 'true');
     } catch {}
@@ -451,17 +481,20 @@ class AudioEngine {
                       }
                     }
                   } else if (event.data === 1) {
+                    this.isUserPaused = false;
                     this.startYtInterval();
                     this.updateMediaSessionState('playing');
                     if (this.onPlayStateChangeCallback) {
                       this.onPlayStateChangeCallback(true);
                     }
                   } else if (event.data === 2) {
-                    // 2: PAUSED (normal pause or buffering pause, do NOT downgrade to 30s preview!)
-                    this.clearYtInterval();
-                    this.updateMediaSessionState('paused');
-                    if (this.onPlayStateChangeCallback) {
-                      this.onPlayStateChangeCallback(false);
+                    // 2: PAUSED (ignore transient buffering/track load pauses so background session is not killed)
+                    if (this.isUserPaused) {
+                      this.clearYtInterval();
+                      this.updateMediaSessionState('paused');
+                      if (this.onPlayStateChangeCallback) {
+                        this.onPlayStateChangeCallback(false);
+                      }
                     }
                   }
                 },
@@ -824,13 +857,17 @@ class AudioEngine {
       if (cachedYt?.duration && !track.duration) {
         track.duration = cachedYt.duration;
       }
+      this.isUserPaused = false;
+      this.silentAudio?.play().catch(() => {});
       this.audio.pause();
       return this.playViaYouTube(targetYtId, effectiveStart);
     }
 
     // 4. If youtubeId is not yet resolved, resolve full song from API
     try {
-      this.audio.pause();
+      this.isUserPaused = false;
+      // Keep silent keep-alive active during network fetch so mobile OS doesn't kill the background thread
+      this.silentAudio?.play().catch(() => {});
       const res = await fetch(`/api/audio/full-source?title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(track.artist)}`);
       if (res.ok) {
         const data = await res.json();
@@ -843,6 +880,7 @@ class AudioEngine {
           }
           fullTrackIdCache.set(cacheKey, { youtubeId: data.youtubeId, duration: data.duration, candidateIds: track.candidateIds });
           saveCachedTrackIds();
+          this.audio.pause();
           return this.playViaYouTube(data.youtubeId, effectiveStart);
         }
       }
@@ -865,6 +903,7 @@ class AudioEngine {
               if (data2.duration && data2.duration > 0) track.duration = data2.duration;
               fullTrackIdCache.set(cacheKey, { youtubeId: data2.youtubeId, duration: data2.duration, candidateIds: track.candidateIds });
               saveCachedTrackIds();
+              this.audio.pause();
               return this.playViaYouTube(data2.youtubeId, effectiveStart);
             }
           }
@@ -891,14 +930,22 @@ class AudioEngine {
     }
 
     // If no more YouTube candidates, fallback to HTML5 preview stream
-    if (track.audioUrl) {
+    if (track.audioUrl && !track.audioUrl.startsWith('synth:')) {
       console.warn(`All YouTube candidates exhausted for "${track.title}". Falling back to HTML5.`);
       this.playViaHtml5(track, startTime);
+    } else {
+      // If neither is playable, immediately advance to the next track to prevent infinite stalls
+      console.warn(`Stream exhausted for "${track.title}", auto-advancing to next track.`);
+      if (this.onEndedCallback) {
+        this.onEndedCallback();
+      }
     }
   }
 
   private async playViaYouTube(youtubeId: string, startTime = 0): Promise<void> {
     this.activeMode = 'youtube';
+    this.isUserPaused = false;
+    this.silentAudio?.play().catch(() => {});
     this.audio.pause();
 
     await this.initYouTube();
@@ -994,16 +1041,21 @@ class AudioEngine {
   public async resume(): Promise<void> {
     if (this.isSynthPlaying) return;
 
+    this.isUserPaused = false;
     this.acquireWakeLock().catch(() => {});
-    this.silentAudio?.pause();
 
-    if (this.activeMode === 'youtube' && this.ytPlayer) {
-      try {
-        this.ytPlayer.playVideo();
-        this.startYtInterval();
-        this.updateMediaSessionState('playing');
-        return;
-      } catch {}
+    if (this.activeMode === 'youtube') {
+      this.silentAudio?.play().catch(() => {});
+      if (this.ytPlayer) {
+        try {
+          this.ytPlayer.playVideo();
+          this.startYtInterval();
+          this.updateMediaSessionState('playing');
+          return;
+        } catch {}
+      }
+    } else {
+      this.silentAudio?.pause();
     }
 
     if (!this.isInitialized) this.initWebAudio();
@@ -1015,6 +1067,7 @@ class AudioEngine {
   }
 
   public pause(): void {
+    this.isUserPaused = true;
     this.releaseWakeLock();
     this.silentAudio?.pause();
     this.updateMediaSessionState('paused');

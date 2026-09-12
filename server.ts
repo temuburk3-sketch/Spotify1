@@ -2327,7 +2327,17 @@ app.all("/api/radio/track", async (req, res) => {
     if (!hasExclusions) {
       const cachedRadio: any = getCached(recommendationsCache, radioCacheKey);
       if (cachedRadio && Array.isArray(cachedRadio.tracks) && cachedRadio.tracks.length >= requestedCount) {
-        return res.json(cachedRadio);
+        // Spotify-style fresh radio: reshuffle cached tracks dynamically while maintaining artist diversity
+        const reshuffledTracks = applyArtistDiversityFilter(
+          [...cachedRadio.tracks].sort(() => Math.random() - 0.5),
+          artist,
+          2,
+          3
+        );
+        return res.json({
+          ...cachedRadio,
+          tracks: reshuffledTracks.slice(0, requestedCount)
+        });
       }
     }
 
@@ -2336,7 +2346,26 @@ app.all("/api/radio/track", async (req, res) => {
     let detectedTheme = "Türkçe Pop";
     let detectedCategory = "pop";
 
-    if (
+    // Detect International / Global Pop & R&B (e.g., Skepta, The Weeknd, Dua Lipa, Billie Eilish, SZA, Drake...)
+    const globalArtists = [
+      'skepta', 'che ecru', 'the weeknd', 'dua lipa', 'billie eilish', 'sza', 'sabrina carpenter',
+      'olivia rodrigo', 'harry styles', 'bruno mars', 'post malone', 'drake', 'taylor swift',
+      'kendrick lamar', 'travis scott', 'beyoncé', 'rihanna', 'ed sheeran', 'ariana grande',
+      'justin bieber', 'adele', 'lana del rey', 'coldplay', 'imagine dragons', 'eminem',
+      'kanye west', 'frank ocean', 'brent faiyaz', 'steve lacy', 'daniel caesar', 'joji',
+      'ravyn lenae', 'b-young', 'central cee', 'stormzy', 'dave', 'burna boy', 'tems',
+      'chris brown', 'usher', 'doja cat', 'cardi b', 'megan thee stallion', 'childish gambino',
+      'tate mcrae', 'chappell roan', 'charlie puth', 'shawn mendes', 'sam smith', 'troye sivan'
+    ];
+    const isGlobalArtist = globalArtists.some(a => normalizedQuery.includes(a));
+    const hasTurkishLetters = /[çğıöşü]/i.test(`${title} ${artist}`);
+    const isEnglishTitle = /\b(love|not|me|you|dont|cant|heart|night|girl|boy|baby|time|summer|dance|like|feel|never|kiss|sun|feather|espresso|taste|vampire|birds|blinding|lights|starboy|snooze|circles|stay|flowers|bad)\b/i.test(title);
+    const isGlobalGenre = /global|international|r&b|hip\s*hop|pop\s*\/\s*r&b|synthpop|dance\s*pop|indie\s*pop/i.test(genre) && !/türkçe|turkish/i.test(genre);
+
+    if ((isGlobalArtist || (isEnglishTitle && !hasTurkishLetters) || (isGlobalGenre && !hasTurkishLetters)) && !normalizedQuery.includes("türkçe") && !normalizedQuery.includes("turkce")) {
+      detectedTheme = "Global Pop & International Hits";
+      detectedCategory = "global";
+    } else if (
       normalizedQuery.includes("ferdi özbeğen") ||
       normalizedQuery.includes("ferdi ozbegen") ||
       normalizedQuery.includes("piyanist") ||
@@ -2498,6 +2527,9 @@ You MUST recommend ONLY songs that belong to the EXACT SAME musical genre, mood,
   EVERY recommendation MUST be Turkish Rap / Hip-Hop.
 - If the seed track is Synthwave (e.g. The Weeknd, Kavinsky, M83):
   Recommend 80s synthwave/retrowave tracks.
+- If the seed track is Global Pop / International / English (e.g. Skepta, Che Ecru, The Weeknd, Dua Lipa, Billie Eilish, SZA, Sabrina Carpenter, Olivia Rodrigo, Harry Styles, Bruno Mars, Drake, Post Malone):
+  EVERY SINGLE recommendation MUST be a worldwide Global Pop, R&B, or Indie hit in English.
+  ABSOLUTELY FORBIDDEN: Any Turkish songs, Ferdi Özbeğen, Arabesk, or Turkish pop!
 - If the seed track is Contemporary 2020s Turkish Pop (e.g. Mert Demir, Mabel Matiz, KÖFN, Simge, Edis):
   Recommend contemporary Turkish pop/synth-pop hits.
 
@@ -2647,6 +2679,33 @@ Provide a valid JSON array where each object has:
           { title: "Instant Crush", artist: "Daft Punk", genre: "Electro Pop / Synth", reason: "Julian Casablancas vokali ve melankolik synthesizer melodisi.", matchScore: 97 },
           { title: "Tech Noir", artist: "Gunship", genre: "Synthwave", reason: "Karanlık analog synthesizer tonları ve 80ler sinematik havası.", matchScore: 95 },
           { title: "Turbo Killer", artist: "Carpenter Brut", genre: "Darksynth", reason: "Yüksek enerjili sert synth riffleri.", matchScore: 94 }
+        ];
+      } else if (detectedCategory === "global") {
+        pool = [
+          { title: "Love Me Not", artist: "Skepta, Che Ecru", genre: "Global Pop / R&B", reason: "Akıcı R&B nakaratı ve modern İngiliz hip-hop ritimleri.", matchScore: 99 },
+          { title: "Birds of a Feather", artist: "Billie Eilish", genre: "Global Pop / Indie", reason: "Yumuşak vokal armonileri ve akılda kalıcı pop tınıları.", matchScore: 98 },
+          { title: "Levitating", artist: "Dua Lipa", genre: "Global Pop / Disco", reason: "Dans ettiren funk bas yürüyüşleri ve disko ritimleri.", matchScore: 98 },
+          { title: "Snooze", artist: "SZA", genre: "Contemporary R&B", reason: "SZA'nın kadife vokali ve duygusal R&B melodisi.", matchScore: 98 },
+          { title: "Kill Bill", artist: "SZA", genre: "Alternative R&B", reason: "Samimi ve akıcı melodik pop/R&B yapısı.", matchScore: 97 },
+          { title: "Espresso", artist: "Sabrina Carpenter", genre: "Global Pop / Funk", reason: "Neşeli retro-pop ritimleri ve akıcı bas tonları.", matchScore: 98 },
+          { title: "Taste", artist: "Sabrina Carpenter", genre: "Pop Rock / Global", reason: "Gitar riffleri ve enerjik pop vokalleri.", matchScore: 97 },
+          { title: "Blinding Lights", artist: "The Weeknd", genre: "Synthwave / Pop", reason: "80'ler retro synthpop tınıları ve evrensel vokal.", matchScore: 99 },
+          { title: "Starboy", artist: "The Weeknd ft. Daft Punk", genre: "Electro Pop / R&B", reason: "Daft Punk prodüksiyonu ve sürükleyici baslar.", matchScore: 98 },
+          { title: "Save Your Tears", artist: "The Weeknd", genre: "Synthwave / Pop", reason: "Melankolik melodiler ve 80ler ritmi.", matchScore: 98 },
+          { title: "As It Was", artist: "Harry Styles", genre: "Indie Pop / Synth", reason: "Canlı synth melodisi ve nostaljik pop yürüyüşü.", matchScore: 97 },
+          { title: "Watermelon Sugar", artist: "Harry Styles", genre: "Pop / Funk", reason: "Yaz enerjisi ve neşeli enstrüman katmanları.", matchScore: 96 },
+          { title: "Sunflower", artist: "Post Malone, Swae Lee", genre: "Melodic Pop / Hip-Hop", reason: "Sıcak vokal armonileri ve akılda kalıcı melodi.", matchScore: 97 },
+          { title: "Circles", artist: "Post Malone", genre: "Pop Rock / Indie", reason: "Akustik gitar yürüyüşleri ve hüzünlü sözler.", matchScore: 97 },
+          { title: "Leave the Door Open", artist: "Bruno Mars, Anderson .Paak, Silk Sonic", genre: "Soul / R&B", reason: "70'ler Motown soul zarafeti ve kusursuz armoni.", matchScore: 98 },
+          { title: "24K Magic", artist: "Bruno Mars", genre: "Funk / Disco Pop", reason: "Eğlenceli retro funk ve yüksek dans enerjisi.", matchScore: 96 },
+          { title: "Vampire", artist: "Olivia Rodrigo", genre: "Pop Rock / Ballad", reason: "Piyanodan patlayan epik rock nakaratına geçiş.", matchScore: 97 },
+          { title: "good 4 u", artist: "Olivia Rodrigo", genre: "Pop Punk", reason: "Yüksek enerjili gitar riffleri ve isyankar vokaller.", matchScore: 96 },
+          { title: "Passionfruit", artist: "Drake", genre: "Dancehall / R&B", reason: "Tropikal hafif beatler ve hipnotize edici vokaller.", matchScore: 97 },
+          { title: "Hold On, We're Going Home", artist: "Drake", genre: "Synthpop / R&B", reason: "80ler synth tınıları ve samimi R&B havası.", matchScore: 96 },
+          { title: "Bad Habit", artist: "Steve Lacy", genre: "Indie / R&B", reason: "Lo-fi gitar akorları ve akılda kalıcı vokal nakaratı.", matchScore: 97 },
+          { title: "Best Part", artist: "Daniel Caesar ft. H.E.R.", genre: "Acoustic R&B", reason: "Huzur veren akustik gitar ve büyüleyici düet.", matchScore: 96 },
+          { title: "Redbone", artist: "Childish Gambino", genre: "Funk / Neo Soul", reason: "Falsetto vokal ve 70ler funk synthesizerları.", matchScore: 97 },
+          { title: "Cruel Summer", artist: "Taylor Swift", genre: "Electropop", reason: "Yükselen synth beatleri ve epik köprü geçişi.", matchScore: 97 }
         ];
       } else {
         // Pop pool with rich peer artist diversity

@@ -310,10 +310,6 @@ export default function App() {
         setDuration(dur);
       },
       onEnded: () => {
-        const now = Date.now();
-        if (now - lastSkipTsRef.current < 800) {
-          return;
-        }
         if (repeatMode === 'one') {
           audioEngine.seek(0);
           audioEngine.resume();
@@ -505,11 +501,17 @@ export default function App() {
 
         // Emergency fallback: Filter POPULAR_ORIGINAL_HITS strictly by seed's theme so it never plays a mismatch
         const emergencyPool = POPULAR_ORIGINAL_HITS.filter(t => !playedTrackIdsRef.current.has(t.id));
-        const emergencyTrack = selectSmartThematicNextTrack(
+        let emergencyTrack = selectSmartThematicNextTrack(
           seed,
           emergencyPool.length > 0 ? emergencyPool : POPULAR_ORIGINAL_HITS,
           playedTrackIdsRef.current
         );
+        if (!emergencyTrack) {
+          // Cycle played history so the radio continues indefinitely without stopping
+          playedTrackIdsRef.current.clear();
+          setPlayedTrackIds(new Set([seed.id]));
+          emergencyTrack = selectSmartThematicNextTrack(seed, POPULAR_ORIGINAL_HITS, new Set([seed.id]));
+        }
         if (emergencyTrack) {
           handlePlayTrack(emergencyTrack, [...playbackContextRef.current.tracks, emergencyTrack], radioTitle);
           return;
@@ -528,6 +530,10 @@ export default function App() {
       queueRef.current = remainingQueue;
       setQueue(remainingQueue);
       handlePlayTrack(nextTrack, playbackContext.tracks.length > 0 ? playbackContext.tracks : [nextTrack], playbackContext.title);
+
+      if (remainingQueue.length > 0) {
+        prefetchTrackYouTubeId(remainingQueue[0]);
+      }
 
       // Proactive continuity replenishment when playing playlist continuation queue (<= 4 songs remain)
       if (remainingQueue.length <= 4 && playbackContext.title?.includes('Uyumlu Akış') && !isRadioFetchingRef.current) {
@@ -627,7 +633,12 @@ export default function App() {
       }
 
       // Emergency fallback: select matching thematic hit from popular library
-      const autoNext = selectSmartThematicNextTrack(currentTrack, POPULAR_ORIGINAL_HITS, playedTrackIdsRef.current);
+      let autoNext = selectSmartThematicNextTrack(currentTrack, POPULAR_ORIGINAL_HITS, playedTrackIdsRef.current);
+      if (!autoNext) {
+        playedTrackIdsRef.current.clear();
+        setPlayedTrackIds(new Set([currentTrack.id]));
+        autoNext = selectSmartThematicNextTrack(currentTrack, POPULAR_ORIGINAL_HITS, new Set([currentTrack.id]));
+      }
       if (autoNext) {
         handlePlayTrack(autoNext, [...currentList, autoNext], `✨ ${playlistName} • Uyumlu Akış`);
         showToast(`✨ Akış Devamı: "${autoNext.title}" - ${autoNext.artist}`);
@@ -835,7 +846,11 @@ export default function App() {
         isCollaborative: false,
         tracks
       };
-      setPlaylists(prev => [newPlaylist, ...prev]);
+      setPlaylists(prev => {
+        const updated = [newPlaylist, ...prev];
+        savePlaylistsToDB(updated);
+        return updated;
+      });
       setActivePlaylistId(newId);
       setActiveView('playlist');
       if (tracks.length > 0) {
@@ -846,12 +861,16 @@ export default function App() {
       return;
     }
 
-    setPlaylists(prev => prev.map(p => {
-      if (p.id === targetPlaylistId) {
-        return { ...p, tracks: [...p.tracks, ...tracks] };
-      }
-      return p;
-    }));
+    setPlaylists(prev => {
+      const updated = prev.map(p => {
+        if (p.id === targetPlaylistId) {
+          return { ...p, tracks: [...p.tracks, ...tracks] };
+        }
+        return p;
+      });
+      savePlaylistsToDB(updated);
+      return updated;
+    });
     showToast(`🎵 ${tracks.length} şarkı listeye eklendi!`);
   };
 
