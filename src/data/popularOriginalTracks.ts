@@ -661,16 +661,16 @@ export const POPULAR_ORIGINAL_HITS: Track[] = [
   // 90'lar Altın Çağ Türkçe Pop & Slow Klasikleri (Kurşun Adres Sormaz Ki -> Kaybolan Yıllar Akışı)
   // ----------------------------------------------------
   {
-    id: 'pop90_kenan_kursun_adres',
+    id: 'pop90_ebru_kursun_adres',
     title: 'Kurşun Adres Sormaz Ki',
-    artist: 'Kenan Doğulu',
-    album: 'Sımsıkı Sıkı Sıkı',
+    artist: 'Ebru Gündeş',
+    album: 'Bize de Bu Yakışır',
     duration: 298,
-    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music125/v4/3f/ea/89/3fea89eb-2df3-2e7a-c15c-37209ff8fca9/8697407051745.jpg/600x600bb.jpg',
+    coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/4a/14/80/4a1480f2-e565-d0ff-788c-f8319f635676/8697407051752.jpg/600x600bb.jpg',
     audioUrl: '',
-    genre: '90lar Pop',
+    genre: '90lar Pop / Klasik',
     isOriginal: true,
-    popularity: 99,
+    popularity: 100,
     addedAt: '2026-08-01T10:00:00Z',
     timedLyrics: [
       { time: 0, text: '🎸 Duygusal akustik arpej girişi' },

@@ -84,17 +84,32 @@ export default function App() {
   // Playlists, Folders & Navigation (Synchronous cache first for 0-flicker instant restore)
   const [isHydrated, setIsHydrated] = useState<boolean>(false);
   const [playlists, setPlaylists] = useState<Playlist[]>(() => {
-    const sync = getInitialPlaylistsSync();
-    return sync && sync.length > 0 ? sync : DEFAULT_PLAYLISTS;
+    try {
+      const sync = getInitialPlaylistsSync();
+      if (sync && Array.isArray(sync) && sync.length > 0) {
+        return sync;
+      }
+    } catch {}
+    return DEFAULT_PLAYLISTS;
   });
   const [folders, setFolders] = useState<PlaylistFolder[]>(() => {
-    const sync = getInitialFoldersSync();
-    return sync && sync.length > 0 ? sync : DEFAULT_FOLDERS;
+    try {
+      const sync = getInitialFoldersSync();
+      if (sync && Array.isArray(sync) && sync.length > 0) {
+        return sync;
+      }
+    } catch {}
+    return DEFAULT_FOLDERS;
   });
   const [activeFolderId, setActiveFolderId] = useState<string>('all');
   const [activePlaylistId, setActivePlaylistId] = useState<string>(() => {
-    const sync = getInitialPlaylistsSync();
-    return sync && sync.length > 0 ? sync[0].id : DEFAULT_PLAYLISTS[0].id;
+    try {
+      const sync = getInitialPlaylistsSync();
+      if (sync && Array.isArray(sync) && sync.length > 0 && sync[0]?.id) {
+        return sync[0].id;
+      }
+    } catch {}
+    return DEFAULT_PLAYLISTS[0]?.id || 'pl_turkce_hitler';
   });
   const [activeView, setActiveView] = useState<'playlist' | 'search' | 'recommendations' | 'queue' | 'lyrics'>('playlist');
 
@@ -1005,25 +1020,33 @@ export default function App() {
     showToast(`🔀 Sıradaki ${shuffled.length} şarkı yeniden karıştırıldı!`);
   };
 
-  // Filter playlists by active folder
+  // Filter playlists by active folder with defensive guards
   const filteredPlaylists = useMemo(() => {
-    if (activeFolderId === 'all') return playlists;
+    const safeList = (playlists || []).filter(p => p && p.id && Array.isArray(p.tracks));
+    if (activeFolderId === 'all') return safeList;
     if (activeFolderId === 'favorites') {
-      return playlists.filter(p => p.tracks.length > 5 || p.isCollaborative);
+      return safeList.filter(p => (p.tracks?.length || 0) > 5 || p.isCollaborative);
     }
     if (activeFolderId === 'spotify') {
-      return playlists.filter(p => p.spotifySourceUrl || p.name.toLowerCase().includes('spotify') || p.name.toLowerCase().includes('hit'));
+      return safeList.filter(p => p.spotifySourceUrl || p.name?.toLowerCase().includes('spotify') || p.name?.toLowerCase().includes('hit'));
     }
     if (activeFolderId === 'energy') {
-      return playlists.filter(p => p.name.toLowerCase().includes('spor') || p.name.toLowerCase().includes('enerji') || p.name.toLowerCase().includes('pop'));
+      return safeList.filter(p => p.name?.toLowerCase().includes('spor') || p.name?.toLowerCase().includes('enerji') || p.name?.toLowerCase().includes('pop'));
     }
     if (activeFolderId === 'chill') {
-      return playlists.filter(p => p.name.toLowerCase().includes('lo-fi') || p.name.toLowerCase().includes('gece') || p.name.toLowerCase().includes('odak'));
+      return safeList.filter(p => p.name?.toLowerCase().includes('lo-fi') || p.name?.toLowerCase().includes('gece') || p.name?.toLowerCase().includes('odak'));
     }
-    return playlists.filter(p => p.folderId === activeFolderId);
+    return safeList.filter(p => p.folderId === activeFolderId);
   }, [playlists, activeFolderId]);
 
-  const currentActivePlaylist = playlists.find(p => p.id === activePlaylistId) || filteredPlaylists[0] || playlists[0];
+  const currentActivePlaylist = useMemo(() => {
+    const safeList = (playlists || []).filter(p => p && p.id && Array.isArray(p.tracks));
+    if (safeList.length === 0) return DEFAULT_PLAYLISTS[0];
+    const match = safeList.find(p => p.id === activePlaylistId);
+    if (match) return match;
+    const firstFiltered = filteredPlaylists.find(p => p && Array.isArray(p.tracks));
+    return firstFiltered || safeList[0] || DEFAULT_PLAYLISTS[0];
+  }, [playlists, activePlaylistId, filteredPlaylists]);
 
   return (
     <div className="flex flex-col h-[100dvh] w-screen bg-[#07090d] text-neutral-100 overflow-hidden font-sans select-none">
@@ -1097,12 +1120,12 @@ export default function App() {
                   }`}
                 >
                   <img
-                    src={pl.coverUrl}
-                    alt={pl.name}
+                    src={pl.coverUrl || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600'}
+                    alt={pl.name || 'Liste'}
                     className="w-5 h-5 rounded-md object-cover shrink-0"
                   />
-                  <span className="truncate max-w-[140px]">{pl.name}</span>
-                  <span className="text-[10px] text-neutral-500 font-mono">({pl.tracks.length})</span>
+                  <span className="truncate max-w-[140px]">{pl.name || 'İsimsiz Liste'}</span>
+                  <span className="text-[10px] text-neutral-500 font-mono">({pl.tracks?.length || 0})</span>
                 </button>
               );
             })}

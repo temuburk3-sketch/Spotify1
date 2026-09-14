@@ -40,17 +40,49 @@ function openDB(): Promise<IDBDatabase> {
   });
 }
 
+// Helper to safely sanitize playlists, discarding nulls and ensuring tracks is always an array
+export function sanitizePlaylists(rawList: any): Playlist[] {
+  if (!Array.isArray(rawList)) return [];
+  return rawList
+    .filter(p => p && typeof p === 'object' && p.id && typeof p.id === 'string')
+    .map(p => {
+      const validTracks = Array.isArray(p.tracks)
+        ? p.tracks
+            .filter((t: any) => t && typeof t === 'object' && t.id && t.title)
+            .map((t: any) => {
+              const { fileBlob, ...rest } = t as any;
+              return rest as Track;
+            })
+        : [];
+      return {
+        ...p,
+        id: String(p.id),
+        name: p.name ? String(p.name) : 'İsimsiz Liste',
+        coverUrl: p.coverUrl || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600',
+        tracks: validTracks
+      } as Playlist;
+    });
+}
+
+// Helper to safely sanitize folders
+export function sanitizeFolders(rawList: any): PlaylistFolder[] {
+  if (!Array.isArray(rawList)) return DEFAULT_FOLDERS;
+  const filtered = rawList
+    .filter(f => f && typeof f === 'object' && f.id && typeof f.id === 'string')
+    .map(f => ({
+      ...f,
+      id: String(f.id),
+      name: f.name ? String(f.name) : 'Klasör'
+    }));
+  return filtered.length > 0 ? filtered : DEFAULT_FOLDERS;
+}
+
 export async function savePlaylistsToDB(playlists: Playlist[]): Promise<void> {
   if (!playlists || playlists.length === 0) return;
 
   // Clean data to ensure only serializable, clean fields are stored
-  const sanitizedPlaylists: Playlist[] = playlists.map(p => ({
-    ...p,
-    tracks: (p.tracks || []).map(t => {
-      const { fileBlob, ...rest } = t as any;
-      return rest as Track;
-    })
-  }));
+  const sanitizedPlaylists = sanitizePlaylists(playlists);
+  if (sanitizedPlaylists.length === 0) return;
 
   // Synchronous localStorage backup with quota protection
   try {
@@ -92,8 +124,9 @@ export function getInitialPlaylistsSync(): Playlist[] | null {
     const local = localStorage.getItem('soundpulse_playlists');
     if (local) {
       const parsed = JSON.parse(local);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+      const sanitized = sanitizePlaylists(parsed);
+      if (sanitized.length > 0) {
+        return sanitized;
       }
     }
   } catch {}
@@ -105,8 +138,9 @@ export function getInitialFoldersSync(): PlaylistFolder[] | null {
     const local = localStorage.getItem('soundpulse_folders');
     if (local) {
       const parsed = JSON.parse(local);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+      const sanitized = sanitizeFolders(parsed);
+      if (sanitized.length > 0) {
+        return sanitized;
       }
     }
   } catch {}
@@ -122,12 +156,15 @@ export async function loadPlaylistsFromDB(): Promise<Playlist[] | null> {
       const req = store.getAll();
       req.onsuccess = () => {
         if (req.result && req.result.length > 0) {
-          resolve(req.result as Playlist[]);
+          const sanitized = sanitizePlaylists(req.result);
+          resolve(sanitized.length > 0 ? sanitized : null);
         } else {
           const local = localStorage.getItem('soundpulse_playlists');
           if (local) {
             try {
-              resolve(JSON.parse(local));
+              const parsed = JSON.parse(local);
+              const sanitized = sanitizePlaylists(parsed);
+              resolve(sanitized.length > 0 ? sanitized : null);
               return;
             } catch {}
           }
@@ -141,7 +178,9 @@ export async function loadPlaylistsFromDB(): Promise<Playlist[] | null> {
     const local = localStorage.getItem('soundpulse_playlists');
     if (local) {
       try {
-        return JSON.parse(local);
+        const parsed = JSON.parse(local);
+        const sanitized = sanitizePlaylists(parsed);
+        return sanitized.length > 0 ? sanitized : null;
       } catch {}
     }
     return null;
@@ -149,8 +188,9 @@ export async function loadPlaylistsFromDB(): Promise<Playlist[] | null> {
 }
 
 export async function saveFoldersToDB(folders: PlaylistFolder[]): Promise<void> {
+  const sanitized = sanitizeFolders(folders);
   try {
-    localStorage.setItem('soundpulse_folders', JSON.stringify(folders));
+    localStorage.setItem('soundpulse_folders', JSON.stringify(sanitized));
   } catch {}
 
   try {
@@ -163,7 +203,7 @@ export async function saveFoldersToDB(folders: PlaylistFolder[]): Promise<void> 
       tx.onabort = () => reject(tx.error);
 
       store.clear();
-      for (const f of folders) {
+      for (const f of sanitized) {
         store.put(f);
       }
     });
@@ -181,12 +221,12 @@ export async function loadFoldersFromDB(): Promise<PlaylistFolder[]> {
       const req = store.getAll();
       req.onsuccess = () => {
         if (req.result && req.result.length > 0) {
-          resolve(req.result as PlaylistFolder[]);
+          resolve(sanitizeFolders(req.result));
         } else {
           const local = localStorage.getItem('soundpulse_folders');
           if (local) {
             try {
-              resolve(JSON.parse(local));
+              resolve(sanitizeFolders(JSON.parse(local)));
               return;
             } catch {}
           }

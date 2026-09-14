@@ -202,18 +202,17 @@ class AudioEngine {
     this.audio.crossOrigin = 'anonymous';
     this.audio.preload = 'auto';
 
-    this.initSilentKeepAlive();
     this.setupListeners();
     this.initVisibilityListener();
-    this.initYouTube().catch(() => {});
   }
 
   // Continuous non-zero PCM keep-alive loop to prevent mobile OS (iOS/Android/Chrome) from killing the audio pipeline in background
-  private initSilentKeepAlive() {
+  public initSilentKeepAlive() {
+    if (this.silentAudio) return;
     try {
-      // 2-second 8kHz mono WAV with inaudible ±1 LSB PCM dither that keeps hardware audio clocks active
+      // 0.25-second 8kHz mono WAV with inaudible ±1 LSB PCM dither that keeps hardware audio clocks active
       const sampleRate = 8000;
-      const numSamples = sampleRate * 2;
+      const numSamples = Math.floor(sampleRate * 0.25);
       const buffer = new Uint8Array(44 + numSamples);
       buffer.set([0x52, 0x49, 0x46, 0x46], 0); // RIFF
       const view = new DataView(buffer.buffer);
@@ -414,7 +413,13 @@ class AudioEngine {
     if (this.ytLoadingPromise) return this.ytLoadingPromise;
 
     this.ytLoadingPromise = new Promise((resolve) => {
+      let attempts = 0;
+      const timeout = setTimeout(() => {
+        resolve();
+      }, 5000);
+
       const checkAndCreate = () => {
+        attempts++;
         if ((window as any).YT && (window as any).YT.Player) {
           try {
             let host = document.getElementById('youtube-player-host');
@@ -457,6 +462,7 @@ class AudioEngine {
                       this.ytPlayer.setPlaybackQuality(this.batterySaverMode ? 'small' : 'medium');
                     }
                   } catch {}
+                  clearTimeout(timeout);
                   resolve();
                 },
                 onStateChange: (event: any) => {
@@ -510,10 +516,14 @@ class AudioEngine {
             });
           } catch (e) {
             console.warn('YouTube init error:', e);
+            clearTimeout(timeout);
             resolve();
           }
-        } else {
+        } else if (attempts < 40) {
           setTimeout(checkAndCreate, 120);
+        } else {
+          clearTimeout(timeout);
+          resolve();
         }
       };
 
@@ -807,6 +817,7 @@ class AudioEngine {
   private async playTrackInternal(track: Track, startTime = 0): Promise<void> {
     this.currentTrack = track;
     this.stopSynth();
+    this.initSilentKeepAlive();
     this.setupMediaSession(track);
     const effectiveStart = startTime > 0 ? startTime : (track.startOffset || 0);
 

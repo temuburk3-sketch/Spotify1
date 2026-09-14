@@ -148,7 +148,13 @@ async function getSpotifyWebToken(): Promise<string | null> {
 // Audio stream helper: search YouTube for 100% full song official audio stream/video ID & duration
 async function searchFullSongVideoId(title: string, artist: string, excludeId?: string): Promise<{ youtubeId: string; duration?: number; candidateIds?: string[] } | null> {
   const cleanTitle = title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
-  const cleanArtist = (artist || '').replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
+  let cleanArtist = (artist || '').replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
+
+  // User preference: for Kurşun Adres Sormaz Ki, canonical popular and beloved version is Ebru Gündeş
+  if (cleanTitle.toLowerCase().includes('kurşun adres sormaz') || cleanTitle.toLowerCase().includes('kursun adres sormaz')) {
+    cleanArtist = 'Ebru Gündeş';
+  }
+
   const cacheKey = `${cleanTitle.toLowerCase()}___${cleanArtist.toLowerCase()}${excludeId ? `___ex_${excludeId}` : ''}`;
 
   const cached = videoIdCache.get(cacheKey);
@@ -2542,6 +2548,13 @@ CRITICAL CONSTRAINT 3 - METADATA SANITIZATION:
 - Return strictly clean, canonical song titles and clean artist names.
 - STRICTLY FORBIDDEN: YouTube labels, downloader stamps, channel handles (@handle), "[Official Video]", "(Lyrics)", "HD", "4K", or "(Remastered)".
 
+CRITICAL CONSTRAINT 4 - 100% HIT DENSITY & S-TIER POPULARITY (ABSOLUTELY NO FILLERS / NO B-SIDES):
+- The user requires that 10 out of 10 songs in the radio MUST be iconic, universally recognized mega-hits ("10 şarkının 10'u da efsane olmalı").
+- STRICTLY FORBIDDEN: Obscure album cuts, forgotten B-sides, experimental filler songs, or tracks only niche fans remember.
+- REQUIRED: Every single recommendation must be an all-time classic, #1 chart-topper with massive popularity that listeners sing along with from the first second.
+- For the song "Kurşun Adres Sormaz Ki": ALWAYS attribute and recommend the iconic, beloved version by Ebru Gündeş (NOT Kenan Doğulu)!
+- If seed is 90s Pop: Recommend legendary hits like "Kaybolan Yıllar" (Sezen Aksu), "Med Cezir" (Levent Yüksel), "Kurşun Adres Sormaz Ki" (Ebru Gündeş), "Fırtınalar" (Ebru Gündeş), "Şıkıdım" (Tarkan), "Kuzu Kuzu" (Tarkan), "Gir Kanıma" (Harun Kolçak), "Aşk" (Sertab Erener), "Yalancı Bahar" (Aşkın Nur Yengi), "Gönül Yorgunu" (Bendeniz), "Kumralım" (Yaşar), "Yalan" (Candan Erçetin).
+
 Generate exactly ${requestedCount} genuine, widely popular, real songs.
 Exclude any of these titles if present: ${excludeTitles.join(", ")}.
 
@@ -2585,30 +2598,36 @@ Provide a valid JSON array where each object has:
         ];
       } else if (detectedCategory === "pop90s") {
         pool = [
-          { title: "Kurşun Adres Sormaz Ki", artist: "Kenan Doğulu", genre: "90lar Pop", reason: "Kenan Doğulu'nun duygusal 90'lar ballad başyapıtı.", matchScore: 99 },
+          { title: "Kurşun Adres Sormaz Ki", artist: "Ebru Gündeş", genre: "90lar Pop / Klasik", reason: "Ebru Gündeş'in eşsiz ve unutulmaz yorumuyla milyonların kalbine kazınan dev klasik.", matchScore: 100 },
           { title: "Kaybolan Yıllar", artist: "Sezen Aksu", genre: "90lar Pop / Klasik", reason: "Akustik piyano ve kemanlarla Türk müziğinin en büyük klasiği.", matchScore: 99 },
           { title: "Med Cezir", artist: "Levent Yüksel", genre: "90lar Pop", reason: "Onno Tunç & Sezen Aksu prodüksiyonu, 90'ların zirvesi.", matchScore: 99 },
+          { title: "Fırtınalar", artist: "Ebru Gündeş", genre: "90lar Pop / Klasik", reason: "Ebru Gündeş'in 90'lara damga vuran güçlü başyapıtı.", matchScore: 99 },
+          { title: "Şıkıdım (Hepsi Senin Mi)", artist: "Tarkan", genre: "90lar Pop", reason: "Tarkan'ın 90'lar Türk popuna yön veren küresel hiti.", matchScore: 99 },
           { title: "Gir Kanıma", artist: "Harun Kolçak", genre: "90lar Pop", reason: "90'lar pop patlamasının en enerjik ve sevilen klasiği.", matchScore: 98 },
           { title: "Aşk", artist: "Sertab Erener", genre: "90lar Pop", reason: "Sertab Erener'in güçlü vokali ve dokunaklı melodisi.", matchScore: 98 },
+          { title: "Sen Allah'ın Bir Lütfusun", artist: "Ebru Gündeş", genre: "90lar Pop / Klasik", reason: "Dillere pelesenk olmuş Ebru Gündeş aşk klasiği.", matchScore: 98 },
           { title: "Yalancı Bahar", artist: "Aşkın Nur Yengi", genre: "90lar Pop", reason: "90'lar Türk popunun en derin ve melankolik şarkısı.", matchScore: 97 },
           { title: "Gönül Yorgunu", artist: "Bendeniz", genre: "90lar Pop", reason: "Bendeniz'in içten sözleri ve 90'lar gitar tonları.", matchScore: 96 },
           { title: "Kumralım", artist: "Yaşar", genre: "90lar Pop", reason: "Akustik gitar ve Yaşar'ın sıcak melodisi.", matchScore: 97 },
           { title: "Yalan", artist: "Candan Erçetin", genre: "90lar Pop", reason: "Fransız şansonu etkisinde 90'lar zarafeti.", matchScore: 96 },
           { title: "Her Gece", artist: "Mirkelam", genre: "90lar Pop", reason: "90'lar Türk popunun koşar adımlarla simgesi olan parça.", matchScore: 97 },
           { title: "Hercai", artist: "Çelik", genre: "90lar Pop", reason: "Dönemin en dokunaklı gitar balladlarından.", matchScore: 96 },
-          { title: "Benimle Oynama", artist: "Burak Kut", genre: "90lar Pop", reason: "90'lar gençlik enerjisi ve akılda kalıcı nakaratı.", matchScore: 95 },
-          { title: "Tuana", artist: "Levent Yüksel", genre: "90lar Pop", reason: "Flamenko gitar ve eşsiz Levent Yüksel vokali.", matchScore: 98 }
+          { title: "Tuana", artist: "Levent Yüksel", genre: "90lar Pop", reason: "Flamenko gitar ve eşsiz Levent Yüksel vokali.", matchScore: 98 },
+          { title: "Kuzu Kuzu", artist: "Tarkan", genre: "Pop / Klasik", reason: "Tarkan'ın dillere destan yaylı ve perküsyon ziyafeti.", matchScore: 99 }
         ];
       } else if (detectedCategory === "arabesk") {
         pool = [
+          { title: "Kurşun Adres Sormaz Ki", artist: "Ebru Gündeş", genre: "Arabesk / Fantezi", reason: "Ebru Gündeş'in eşsiz ve unutulmaz yorumuyla milyonların kalbine kazınan dev klasik.", matchScore: 100 },
           { title: "Affet", artist: "Müslüm Gürses", genre: "Arabesk / Damar", reason: "Müslüm Baba klasiği, derin duygusal keder ve bağlama nağmeleri.", matchScore: 99 },
           { title: "Nilüfer", artist: "Müslüm Gürses", genre: "Arabesk / Damar", reason: "Yoğun keman ve akustik yaylı tınıları.", matchScore: 98 },
           { title: "Unutamadım", artist: "Müslüm Gürses", genre: "Arabesk / Damar", reason: "Müslüm Gürses'in efsanevi eseri, hüzünlü yaylılar.", matchScore: 99 },
+          { title: "Fırtınalar", artist: "Ebru Gündeş", genre: "Arabesk / Fantezi", reason: "Ebru Gündeş'in en unutulmaz damar ve fantezi başyapıtı.", matchScore: 99 },
           { title: "Ben De Özledim", artist: "Ferdi Tayfur", genre: "Arabesk / Damar", reason: "Ferdi Tayfur'un efsanevi melodik bağlama ve aşk nağmeleri.", matchScore: 97 },
           { title: "Bana Sor", artist: "Ferdi Tayfur", genre: "Arabesk / Damar", reason: "Gözyaşı ve hasret temalı klasik Ferdi Tayfur bestesi.", matchScore: 96 },
           { title: "Huzurum Kalmadı", artist: "Ferdi Tayfur", genre: "Arabesk / Damar", reason: "Arabesk müziğin altın çağını temsil eden başyapıt.", matchScore: 96 },
           { title: "Sen Affetsen Ben Affetmem", artist: "Bergen", genre: "Arabesk / Damar", reason: "Bergen'in içe işleyen güçlü arabesk yorumu.", matchScore: 98 },
           { title: "Benim İçin Üzülme", artist: "Bergen", genre: "Arabesk / Damar", reason: "Bergen'in unutulmaz acı dolu feryadı.", matchScore: 97 },
+          { title: "Demir Attım Yalnızlığa", artist: "Ebru Gündeş", genre: "Arabesk / Damar", reason: "Ebru Gündeş'in güçlü sesiyle yürek dağlayan eseri.", matchScore: 98 },
           { title: "Duygularım", artist: "Azer Bülbül", genre: "Arabesk / Damar", reason: "Azer Bülbül'ün benzersiz titreyen vokal tarzı ve damar ritimleri.", matchScore: 96 },
           { title: "Çoğu Gitti Azı Kaldı", artist: "Azer Bülbül", genre: "Arabesk / Damar", reason: "İçten ve sarsıcı Azer Bülbül klasiği.", matchScore: 95 },
           { title: "Duyanlara Duymayanlara", artist: "Cengiz Kurtoğlu", genre: "Taverna / Arabesk", reason: "Taverna ve arabesk müziğin en büyük klasiklerinden.", matchScore: 97 },
@@ -2622,7 +2641,7 @@ Provide a valid JSON array where each object has:
           { title: "Güz Gülleri", artist: "Hakan Taşıyan", genre: "Arabesk / Damar", reason: "Hakan Taşıyan'ın buğulu sesi ve hüznü.", matchScore: 95 },
           { title: "Kaderimin Oyunu", artist: "Orhan Gencebay", genre: "Klasik Arabesk", reason: "Orhan Gencebay'ın senfonik elektro-bağlama armonisi.", matchScore: 97 },
           { title: "Batsın Bu Dünya", artist: "Orhan Gencebay", genre: "Klasik Arabesk", reason: "Türk arabesk tarihinin marşı niteliğindeki başyapıtı.", matchScore: 98 },
-          { title: "Dön Ne Olur", artist: "Ebru Gündeş", genre: "Fantezi / Arabesk", reason: "Ebru Gündeş'in güçlü sesinden yürek yakan bir melodi.", matchScore: 96 },
+          { title: "Dön Ne Olur", artist: "Ebru Gündeş", genre: "Fantezi / Arabesk", reason: "Ebru Gündeş'in güçlü sesinden yürek yakan bir melodi.", matchScore: 98 },
           { title: "Sabahçı Kahvesi", artist: "Ferdi Tayfur", genre: "Arabesk / Damar", reason: "Gece yalnızlığını anlatan en derin arabesk şarkı.", matchScore: 96 }
         ];
       } else if (detectedCategory === "rock") {
