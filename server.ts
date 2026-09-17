@@ -2311,8 +2311,17 @@ app.all("/api/radio/track", async (req, res) => {
       genre = "",
       count = 12,
       excludeTitles = [],
-      excludeIds = []
+      excludeIds = [],
+      likedArtists = [],
+      likedTracks = []
     } = dataSrc;
+
+    const parsedLikedArtists: string[] = Array.isArray(likedArtists)
+      ? likedArtists.map((a: any) => String(a).trim()).filter(Boolean)
+      : [];
+    const parsedLikedTracks: string[] = Array.isArray(likedTracks)
+      ? likedTracks.map((t: any) => String(t).trim()).filter(Boolean)
+      : [];
 
     const requestedCount = Math.min(Math.max(Number(count) || 12, 4), 20);
     const parsedExcludeTitles = Array.isArray(excludeTitles)
@@ -2329,7 +2338,11 @@ app.all("/api/radio/track", async (req, res) => {
     ]);
 
     const hasExclusions = excludeSet.size > 1;
-    const radioCacheKey = `radio_${title.trim().toLowerCase()}_${artist.trim().toLowerCase()}_${genre.trim().toLowerCase()}`;
+    const userTasteSignature = [
+      ...parsedLikedArtists.slice(0, 6).map(a => a.toLowerCase().trim()),
+      ...parsedLikedTracks.slice(0, 6).map(t => t.toLowerCase().trim())
+    ].sort().join('_');
+    const radioCacheKey = `radio_${title.trim().toLowerCase()}_${artist.trim().toLowerCase()}_${genre.trim().toLowerCase()}${userTasteSignature ? `_u_${userTasteSignature}` : ''}`;
     if (!hasExclusions) {
       const cachedRadio: any = getCached(recommendationsCache, radioCacheKey);
       if (cachedRadio && Array.isArray(cachedRadio.tracks) && cachedRadio.tracks.length >= requestedCount) {
@@ -2555,6 +2568,19 @@ CRITICAL CONSTRAINT 4 - 100% HIT DENSITY & S-TIER POPULARITY (ABSOLUTELY NO FILL
 - For the song "Kurşun Adres Sormaz Ki": ALWAYS attribute and recommend the iconic, beloved version by Ebru Gündeş (NOT Kenan Doğulu)!
 - If seed is 90s Pop: Recommend legendary hits like "Kaybolan Yıllar" (Sezen Aksu), "Med Cezir" (Levent Yüksel), "Kurşun Adres Sormaz Ki" (Ebru Gündeş), "Fırtınalar" (Ebru Gündeş), "Şıkıdım" (Tarkan), "Kuzu Kuzu" (Tarkan), "Gir Kanıma" (Harun Kolçak), "Aşk" (Sertab Erener), "Yalancı Bahar" (Aşkın Nur Yengi), "Gönül Yorgunu" (Bendeniz), "Kumralım" (Yaşar), "Yalan" (Candan Erçetin).
 
+CRITICAL CONSTRAINT 5 - USER TASTE (FAVORITES & LIKED ITEMS) PRIORITY & VARIETY DISCOVERY (MANDATORY USER INTENT):
+${parsedLikedArtists.length > 0 || parsedLikedTracks.length > 0 ? `The listener explicitly likes and follows these artists/songs:
+- Liked Artists: ${parsedLikedArtists.slice(0, 15).join(', ')}
+- Liked Songs: ${parsedLikedTracks.slice(0, 15).join(', ')}
+
+CORE SELECTION BALANCE:
+1. FAVORITES PRIORITY (approx 70-75%):
+   Strongly prioritize artists and songs that the user has liked or their direct musical peers/duets that match the genre/vibe of "${title}". For these, mention in reason: "❤️ Beğendiğin Sanatçı/Tarz uyumu".
+2. VARIETY & DISCOVERY INJECTION ("Arada Değişiklik İçin Öneri", approx 25-30%):
+   Do NOT repeat only the same 2-3 artists! Intentionally weave in 2 or 3 exciting, highly compatible variety recommendations ("arada değişiklik için özel öneri") from related legends that match the sound perfectly.
+   For these variety discovery songs, write in reason: "✨ Özel Keşif: Arada Değişiklik Önerisi".` : `CORE SELECTION BALANCE:
+Prioritize iconic peer hits (~70%) while weaving in 2-3 refreshing variety discovery tracks (~30%, reason: "✨ Özel Keşif: Arada Değişiklik Önerisi") so the radio stays dynamic and never gets repetitive.`}
+
 Generate exactly ${requestedCount} genuine, widely popular, real songs.
 Exclude any of these titles if present: ${excludeTitles.join(", ")}.
 
@@ -2755,8 +2781,61 @@ Provide a valid JSON array where each object has:
       }
 
       // Shuffle pool so sequential batches don't repeat order
-      const shuffledPool = [...pool].sort(() => Math.random() - 0.5);
-      rawRecommendations = shuffledPool;
+      // Prioritize user's liked artists & tracks while weaving in variety discovery
+      const likedSet = new Set(parsedLikedArtists.map(a => a.toLowerCase().trim()));
+      const likedSongSet = new Set(parsedLikedTracks.map(t => t.toLowerCase().trim()));
+
+      const favoritesPool: typeof pool = [];
+      const discoveryPool: typeof pool = [];
+
+      for (const item of pool) {
+        const itemArtist = item.artist.toLowerCase().trim();
+        const itemTitle = item.title.toLowerCase().trim();
+        if (likedSet.has(itemArtist) || likedSongSet.has(itemTitle)) {
+          favoritesPool.push({
+            ...item,
+            reason: `❤️ Beğendiğin Sanatçı: ${item.artist} - ${item.reason}`
+          });
+        } else {
+          discoveryPool.push({
+            ...item,
+            reason: `✨ Özel Keşif: Arada Değişiklik Önerisi (${item.artist})`
+          });
+        }
+      }
+
+      // High-entropy Fisher-Yates shuffle on pools
+      const shuffleList = (arr: any[]) => {
+        const copy = [...arr];
+        for (let i = copy.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [copy[i], copy[j]] = [copy[j], copy[i]];
+        }
+        return copy;
+      };
+
+      const shuffledFavs = shuffleList(favoritesPool);
+      const shuffledDiscovery = shuffleList(discoveryPool);
+
+      // Interleave: ~70% favorites, ~30% discovery variety
+      const interleaved: typeof pool = [];
+      let favIdx = 0;
+      let discIdx = 0;
+      while (interleaved.length < pool.length && (favIdx < shuffledFavs.length || discIdx < shuffledDiscovery.length)) {
+        // Take 2-3 from favorites
+        if (favIdx < shuffledFavs.length) {
+          interleaved.push(shuffledFavs[favIdx++]);
+        }
+        if (favIdx < shuffledFavs.length && Math.random() > 0.3) {
+          interleaved.push(shuffledFavs[favIdx++]);
+        }
+        // Take 1 variety discovery
+        if (discIdx < shuffledDiscovery.length) {
+          interleaved.push(shuffledDiscovery[discIdx++]);
+        }
+      }
+
+      rawRecommendations = interleaved.length > 0 ? interleaved : shuffleList(pool);
     }
 
     // Filter out seed track and all excludeSet tracks, sanitizing each one first

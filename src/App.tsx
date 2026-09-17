@@ -59,7 +59,8 @@ import {
   fetchEndlessRadioBatch,
   fetchPlaylistAutoplayTracks,
   getSpotifySmartShuffleTrack,
-  getBalancedShuffleQueue
+  getBalancedShuffleQueue,
+  createTrueShuffleQueue
 } from './services/recommendationService';
 import { POPULAR_ORIGINAL_HITS } from './data/popularOriginalTracks';
 import { collabManager } from './services/collaboration';
@@ -111,7 +112,7 @@ export default function App() {
     } catch {}
     return DEFAULT_PLAYLISTS[0]?.id || 'pl_turkce_hitler';
   });
-  const [activeView, setActiveView] = useState<'playlist' | 'search' | 'recommendations' | 'queue' | 'lyrics'>('playlist');
+  const [activeView, setActiveView] = useState<'home' | 'playlist' | 'search' | 'recommendations' | 'queue' | 'lyrics'>('playlist');
 
   // Lock State
   const [isLocked, setIsLocked] = useState<boolean>(isAppLocked());
@@ -386,6 +387,21 @@ export default function App() {
         title: contextName || 'Çalma Listesi',
         tracks: contextTracks
       });
+
+      // Synchronize queue when selecting a track directly from a playlist
+      if (!contextName?.includes('Radyo') && contextTracks.length > 1) {
+        const otherTracks = contextTracks.filter(t => t.id !== track.id);
+        if (shuffleMode !== 'off') {
+          const shuffledQueue = createTrueShuffleQueue(otherTracks);
+          setQueue(shuffledQueue);
+          queueRef.current = shuffledQueue;
+        } else {
+          const curIdx = contextTracks.findIndex(t => t.id === track.id);
+          const seqQueue = curIdx !== -1 ? contextTracks.slice(curIdx + 1) : otherTracks;
+          setQueue(seqQueue);
+          queueRef.current = seqQueue;
+        }
+      }
     }
 
     recordListeningEvent(track, 0, false);
@@ -605,11 +621,12 @@ export default function App() {
         return;
       }
     } else if (shuffleMode === 'random' && currentList.length > 0) {
-      // Balanced dispersion shuffle (prevents same artist clumping)
+      // Balanced dispersion shuffle with high-entropy randomized sampling
       const remaining = currentList.filter(t => !playedTrackIds.has(t.id));
-      const pool = remaining.length > 0 ? remaining : currentList;
-      const balancedPool = getBalancedShuffleQueue(pool, currentTrack?.id);
-      const next = balancedPool[0] || pool[Math.floor(Math.random() * pool.length)];
+      const pool = remaining.length > 0 ? remaining : currentList.filter(t => t.id !== currentTrack?.id);
+      const balancedPool = getBalancedShuffleQueue(pool.length > 0 ? pool : currentList, currentTrack?.id);
+      const pickSlice = balancedPool.slice(0, Math.min(4, balancedPool.length));
+      const next = pickSlice.length > 0 ? pickSlice[Math.floor(Math.random() * pickSlice.length)] : pool[0];
       if (next) {
         handlePlayTrack(next, currentList, playbackContext.title);
         return;
@@ -696,14 +713,32 @@ export default function App() {
     if (shuffleMode === 'off') {
       setShuffleMode('smart');
       setSmartShuffleEnabled(true);
+      if (queue.length > 1) {
+        const shuffled = createTrueShuffleQueue(queue);
+        setQueue(shuffled);
+        queueRef.current = shuffled;
+      }
       showToast('✨ Akıllı Tematik Karışık Çalma Açıldı');
     } else if (shuffleMode === 'smart') {
       setShuffleMode('random');
       setSmartShuffleEnabled(false);
+      if (queue.length > 1) {
+        const shuffled = createTrueShuffleQueue(queue);
+        setQueue(shuffled);
+        queueRef.current = shuffled;
+      }
       showToast('🔀 Standart Karışık Çalma Açıldı');
     } else {
       setShuffleMode('off');
       setSmartShuffleEnabled(false);
+      if (playbackContext.tracks.length > 1 && currentTrack) {
+        const curIdx = playbackContext.tracks.findIndex(t => t.id === currentTrack.id);
+        if (curIdx !== -1) {
+          const seq = playbackContext.tracks.slice(curIdx + 1);
+          setQueue(seq);
+          queueRef.current = seq;
+        }
+      }
       showToast('Sıralı Çalma Modu');
     }
   };
@@ -789,12 +824,16 @@ export default function App() {
 
     if (shuffle) {
       const randomIdx = Math.floor(Math.random() * playlist.tracks.length);
-      handlePlayTrack(playlist.tracks[randomIdx], playlist.tracks, playlist.name);
-      const rest = [...playlist.tracks].filter((_, i) => i !== randomIdx);
-      setQueue(rest.sort(() => Math.random() - 0.5));
+      const chosenTrack = playlist.tracks[randomIdx];
+      const rest = playlist.tracks.filter((_, i) => i !== randomIdx);
+      const shuffledQueue = createTrueShuffleQueue(rest);
+      handlePlayTrack(chosenTrack, playlist.tracks, playlist.name);
+      setQueue(shuffledQueue);
+      queueRef.current = shuffledQueue;
     } else {
       handlePlayTrack(playlist.tracks[0], playlist.tracks, playlist.name);
       setQueue(playlist.tracks.slice(1));
+      queueRef.current = playlist.tracks.slice(1);
     }
   };
 
@@ -973,11 +1012,14 @@ export default function App() {
   const handlePlayMixedTracks = (tracks: Track[], mixTitle: string) => {
     if (tracks.length === 0) return;
     const [first, ...rest] = tracks;
+    const queueTracks = shuffleMode !== 'off' ? createTrueShuffleQueue(rest) : rest;
     setPlaybackContext({
+      type: 'custom',
       tracks: tracks,
-      name: mixTitle
+      title: mixTitle
     });
-    setQueue(rest);
+    setQueue(queueTracks);
+    queueRef.current = queueTracks;
     handlePlayTrack(first, tracks, mixTitle);
     showToast(`🔀 "${mixTitle}" (${tracks.length} şarkı) çalmaya başladı!`);
   };
@@ -1011,13 +1053,10 @@ export default function App() {
       showToast('Sırada karıştırılacak yeterli şarkı yok');
       return;
     }
-    const shuffled = [...queue];
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-    }
+    const shuffled = createTrueShuffleQueue(queue);
     setQueue(shuffled);
-    showToast(`🔀 Sıradaki ${shuffled.length} şarkı yeniden karıştırıldı!`);
+    queueRef.current = shuffled;
+    showToast(`🔀 Sıradaki ${shuffled.length} şarkı gerçek rastgelelikle yeniden karıştırıldı!`);
   };
 
   // Filter playlists by active folder with defensive guards

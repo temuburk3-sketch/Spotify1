@@ -1,6 +1,7 @@
 import { Track, Playlist, ListeningHistoryItem, ListeningHabitsSummary, SmartRecommendationOptions } from '../types';
 import { searchUniversalTracks } from './universalSearchService';
 import { POPULAR_ORIGINAL_HITS } from '../data/popularOriginalTracks';
+import { getFollowedTracks, getFollowedArtists, isTrackFollowed, isArtistFollowed } from './followService';
 
 const HISTORY_KEY = 'soundpulse_listening_history';
 const PIN_KEY = 'soundpulse_user_pin';
@@ -967,8 +968,11 @@ export async function fetchThematicSongRadio(
   excludeSet.add(seedTrack.id.toLowerCase().trim());
   excludeSet.add(seedTrack.title.toLowerCase().trim());
 
-  // 1. Try Server API first with both excludeIds and excludeTitles
+  // 1. Try Server API first with user taste preferences and exclusions
   try {
+    const followedArtists = getFollowedArtists();
+    const followedTracks = getFollowedTracks().map(t => t.title);
+
     const res = await fetch('/api/radio/track', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -978,7 +982,9 @@ export async function fetchThematicSongRadio(
         genre: seedTrack.genre || classification.displayName,
         count,
         excludeTitles: Array.from(excludeSet),
-        excludeIds: Array.from(excludeSet)
+        excludeIds: Array.from(excludeSet),
+        likedArtists: followedArtists,
+        likedTracks: followedTracks
       })
     });
 
@@ -1009,13 +1015,13 @@ export async function fetchThematicSongRadio(
     console.warn('Song Radio online API failed, executing client-side related artist query:', err);
   }
 
-  // 2. Client-side Curated Match from POPULAR_ORIGINAL_HITS
+  // 2. Client-side Curated Match from POPULAR_ORIGINAL_HITS with User Taste Prioritization & Discovery
   const radioTracks: Track[] = [];
   const seenSongKeys = new Set<string>();
   const seedSongKey = getCanonicalSongKey(seedTrack.title);
   seenSongKeys.add(seedSongKey);
 
-  // First, extract high-scoring peer tracks from curated POPULAR_ORIGINAL_HITS
+  // Extract high-scoring peer tracks from curated POPULAR_ORIGINAL_HITS
   const curatedCandidates = POPULAR_ORIGINAL_HITS
     .map(popTrack => {
       const { title: cleanTitle, artist: cleanArtist } = sanitizeTrackTitleAndArtist(popTrack.title, popTrack.artist);
@@ -1031,26 +1037,102 @@ export async function fetchThematicSongRadio(
         !excludeSet.has(item.track.id.toLowerCase().trim()) &&
         !excludeSet.has(item.track.title.toLowerCase().trim())
       );
-    })
-    // Spotify-style non-deterministic dynamic shuffling within high-affinity tiers (adds natural freshness)
-    .sort((a, b) => {
+    });
+
+  // Separate candidates into User Favorites Pool and Variety Discovery Pool
+  const favCandidates: typeof curatedCandidates = [];
+  const discoveryCandidates: typeof curatedCandidates = [];
+
+  for (const item of curatedCandidates) {
+    const isFavArtist = isArtistFollowed(item.track.artist);
+    const isFavSong = isTrackFollowed(item.track.id) || isTrackFollowed(item.track.title);
+    if (isFavArtist || isFavSong) {
+      favCandidates.push(item);
+    } else {
+      discoveryCandidates.push(item);
+    }
+  }
+
+  // High-entropy sort for both pools
+  const shuffleOrSort = (arr: typeof curatedCandidates) => {
+    return [...arr].sort((a, b) => {
       const scoreDiff = b.affinity.score - a.affinity.score;
-      if (Math.abs(scoreDiff) < 15) {
+      if (Math.abs(scoreDiff) < 20) {
         return Math.random() - 0.5;
       }
       return scoreDiff;
     });
+  };
 
-  for (const item of curatedCandidates) {
+  const sortedFavs = shuffleOrSort(favCandidates);
+  const sortedDisc = shuffleOrSort(discoveryCandidates);
+
+  // Interleave: ~70% user favorites, ~30% fresh discovery variety
+  const interleavedList: { track: Track; isDiscovery: boolean; reason: string; score: number }[] = [];
+  let fIdx = 0;
+  let dIdx = 0;
+
+  while (
+    interleavedList.length < count &&
+    (fIdx < sortedFavs.length || dIdx < sortedDisc.length)
+  ) {
+    // 2 Favorite tracks
+    if (fIdx < sortedFavs.length) {
+      const item = sortedFavs[fIdx++];
+      interleavedList.push({
+        track: item.track,
+        isDiscovery: false,
+        reason: item.affinity.reason || `❤️ Beğendiğin Sanatçı/Şarkı Uyumu`,
+        score: item.affinity.score
+      });
+    }
+    if (fIdx < sortedFavs.length && Math.random() > 0.3) {
+      const item = sortedFavs[fIdx++];
+      interleavedList.push({
+        track: item.track,
+        isDiscovery: false,
+        reason: item.affinity.reason || `❤️ Beğendiğin Sanatçı/Şarkı Uyumu`,
+        score: item.affinity.score
+      });
+    }
+    // 1 Discovery track ("arada değişiklik için öneri")
+    if (dIdx < sortedDisc.length) {
+      const item = sortedDisc[dIdx++];
+      interleavedList.push({
+        track: item.track,
+        isDiscovery: true,
+        reason: `✨ Özel Keşif: Arada Değişiklik Önerisi (${item.track.artist})`,
+        score: item.affinity.score
+      });
+    }
+  }
+
+  // If favorites were empty, fall back to sortedDisc
+  if (interleavedList.length === 0) {
+    sortedDisc.forEach((item, idx) => {
+      interleavedList.push({
+        track: item.track,
+        isDiscovery: idx % 3 === 0,
+        reason: idx % 3 === 0
+          ? `✨ Özel Keşif: Arada Değişiklik Önerisi (${item.track.artist})`
+          : item.affinity.reason || `${classification.displayName} ekolüyle uyumlu`,
+        score: item.affinity.score
+      });
+    });
+  }
+
+  for (const item of interleavedList) {
     if (radioTracks.length >= count) break;
     const sKey = getCanonicalSongKey(item.track.title);
-    seenSongKeys.add(sKey);
-    radioTracks.push({
-      ...item.track,
-      isSmartRecommendation: true,
-      recommendationReason: item.affinity.reason || `${classification.displayName} ekolüyle uyumlu`,
-      matchScore: Math.min(99, Math.max(90, Math.round(item.affinity.score > 70 ? item.affinity.score : 94)))
-    });
+    if (!seenSongKeys.has(sKey)) {
+      seenSongKeys.add(sKey);
+      radioTracks.push({
+        ...item.track,
+        isSmartRecommendation: true,
+        recommendationReason: item.reason,
+        matchScore: Math.min(99, Math.max(90, Math.round(item.score > 70 ? item.score : 94)))
+      });
+    }
   }
 
   // 3. If more tracks are needed, query searchUniversalTracks with related peers
@@ -1493,13 +1575,25 @@ export function scoreTrackAffinity(
     score -= 35; // Deprioritize obscure tracks or B-sides
   }
 
-  // 5. Freshness Bonus (Unplayed tracks get priority)
-  if (!playedRecently) {
-    score += 20;
+  // 5. User Taste & Favorites Priority (MANDATORY USER INTENT: "beğendiğim kişiler ve şarkılar öncelikli yap")
+  const isLikedArtist = candArtist ? isArtistFollowed(candidate.artist) : false;
+  const isLikedSong = isTrackFollowed(candidate.id) || isTrackFollowed(candidate.title);
+  if (isLikedArtist) {
+    score += 45;
+    reason = `❤️ Beğendiğin Sanatçı: ${candidate.artist}`;
+  }
+  if (isLikedSong) {
+    score += 50;
+    reason = `❤️ Beğendiğin Şarkı: ${candidate.title}`;
   }
 
-  // 6. Natural soft variation (±3 pts) so playlist is not rigidly identical each run
-  score += (Math.random() * 6) - 3;
+  // 6. Freshness Bonus (Unplayed tracks get priority)
+  if (!playedRecently) {
+    score += 25;
+  }
+
+  // 7. Dynamic entropy variation (±12 pts) so playlist is NEVER rigidly identical each run
+  score += (Math.random() * 24) - 12;
 
   if (!reason) {
     reason = `Spotify Akıllı Akış: ${candidate.artist || 'Sanatçı'} uyumu`;
@@ -1518,6 +1612,10 @@ export function scoreTrackAffinity(
   };
 }
 
+// Session transition history & radio step counter to prevent repetitive pairwise sequences
+const sessionTransitions = new Map<string, number>();
+let globalRadioStepCounter = 0;
+
 export function selectSmartThematicNextTrack(
   currentTrack: Track,
   pool: Track[],
@@ -1525,6 +1623,7 @@ export function selectSmartThematicNextTrack(
   fallbackPool: Track[] = []
 ): Track | null {
   if (!currentTrack) return null;
+  globalRadioStepCounter++;
 
   // Combine local playlist tracks with fallback library (e.g. popular original hits)
   const combined = [...pool, ...fallbackPool];
@@ -1538,18 +1637,88 @@ export function selectSmartThematicNextTrack(
   const candidates = Array.from(uniqueMap.values());
   if (candidates.length === 0) return null;
 
+  // Clean stale session transitions older than 10 minutes
+  const now = Date.now();
+  sessionTransitions.forEach((timestamp, key) => {
+    if (now - timestamp > 600000) {
+      sessionTransitions.delete(key);
+    }
+  });
+
   // Score all candidates
   const scored = candidates
-    .map(c => scoreTrackAffinity(currentTrack, c, playedTrackIds.has(c.id)))
-    .filter(res => res.score > 35); // strictly filter out clashes and unsuited songs
+    .map(c => {
+      const affinity = scoreTrackAffinity(currentTrack, c, playedTrackIds.has(c.id));
+      let adjustedScore = affinity.score;
+
+      // Penalize transitions that were already played recently from this track
+      const transitionKey = `${currentTrack.id}->${c.id}`;
+      if (sessionTransitions.has(transitionKey)) {
+        adjustedScore -= 65;
+      }
+
+      // Penalize consecutive artist duplicate to prevent monotonous loops
+      if (c.artist && currentTrack.artist && c.artist.toLowerCase().trim() === currentTrack.artist.toLowerCase().trim()) {
+        adjustedScore -= 40;
+      }
+
+      return {
+        ...affinity,
+        score: adjustedScore
+      };
+    })
+    .filter(res => res.score > 25); // strictly filter out clashes and unsuited songs
 
   if (scored.length === 0) return null;
 
+  // "arada değişiklik için öneri olsun daha mantıklı olur"
+  // Every 3-4 songs (~28% of the time), inject a fresh, compatible variety discovery track
+  const isDiscoveryTime = (globalRadioStepCounter % 4 === 0) || (Math.random() < 0.28);
+  if (isDiscoveryTime) {
+    const discoveryCandidates = scored.filter(item => {
+      const notLikedArtist = !isArtistFollowed(item.track.artist);
+      const notLikedSong = !isTrackFollowed(item.track.id) && !isTrackFollowed(item.track.title);
+      return notLikedArtist && notLikedSong && item.score > 40;
+    });
+
+    if (discoveryCandidates.length > 0) {
+      // Pick randomly from top discovery options
+      discoveryCandidates.sort((a, b) => b.score - a.score);
+      const topDiscSlice = discoveryCandidates.slice(0, Math.min(4, discoveryCandidates.length));
+      const discChosen = topDiscSlice[Math.floor(Math.random() * topDiscSlice.length)];
+
+      sessionTransitions.set(`${currentTrack.id}->${discChosen.track.id}`, now);
+      return {
+        ...discChosen.track,
+        isSmartRecommendation: true,
+        recommendationReason: `✨ Özel Keşif: Arada Değişiklik Önerisi (${discChosen.track.artist})`
+      };
+    }
+  }
+
+  // Sort candidates by adjusted score
   scored.sort((a, b) => b.score - a.score);
 
-  // Pick probabilistically from top 3 candidates (Spotify smooth discovery)
-  const topSlice = scored.slice(0, Math.min(3, scored.length));
-  const chosen = topSlice[Math.floor(Math.random() * topSlice.length)];
+  // High-entropy Softmax / Boltzmann probabilistic sampling across top 8 candidates
+  // This completely eliminates the frozen loop bug where song A always chained to song B
+  const topCandidates = scored.slice(0, Math.min(8, scored.length));
+  const temperature = 14.0;
+  const maxScore = topCandidates[0].score;
+  const expWeights = topCandidates.map(c => Math.exp((c.score - maxScore) / temperature));
+  const sumWeights = expWeights.reduce((acc, w) => acc + w, 0);
+
+  let randomVal = Math.random() * sumWeights;
+  let chosen = topCandidates[0];
+  for (let i = 0; i < topCandidates.length; i++) {
+    randomVal -= expWeights[i];
+    if (randomVal <= 0) {
+      chosen = topCandidates[i];
+      break;
+    }
+  }
+
+  // Record transition in session memory
+  sessionTransitions.set(`${currentTrack.id}->${chosen.track.id}`, now);
 
   return {
     ...chosen.track,
@@ -1564,7 +1733,7 @@ export function buildSpotifySmartShuffleQueue(
   playedTrackIds: Set<string>,
   discoveryPool: Track[] = []
 ): Track[] {
-  // Sort remaining playlist tracks acoustically based on currentTrack
+  // Sort remaining playlist tracks acoustically with dynamic stochastic temperature
   const remaining = playlistTracks.filter(t => t.id !== currentTrack.id && !playedTrackIds.has(t.id));
   const basePool = remaining.length > 0 ? remaining : playlistTracks.filter(t => t.id !== currentTrack.id);
 
@@ -1573,16 +1742,23 @@ export function buildSpotifySmartShuffleQueue(
   const tempPool = [...basePool];
 
   while (tempPool.length > 0) {
-    let bestIdx = 0;
-    let bestScore = -99999;
-    for (let i = 0; i < tempPool.length; i++) {
-      const { score } = scoreTrackAffinity(cursor, tempPool[i], false);
-      if (score > bestScore) {
-        bestScore = score;
-        bestIdx = i;
+    // Score all pool items against cursor with random temperature jitter and artist spacing
+    const candidateScores = tempPool.map((t, idx) => {
+      const { score } = scoreTrackAffinity(cursor, t, false);
+      let adjusted = score + ((Math.random() * 24) - 12);
+      // Penalize consecutive same artist
+      if (t.artist && cursor.artist && t.artist.toLowerCase().trim() === cursor.artist.toLowerCase().trim()) {
+        adjusted -= 50;
       }
-    }
-    const chosen = tempPool.splice(bestIdx, 1)[0];
+      return { idx, score: adjusted };
+    });
+
+    candidateScores.sort((a, b) => b.score - a.score);
+    // Pick probabilistically from top 3
+    const topChoices = candidateScores.slice(0, Math.min(3, candidateScores.length));
+    const selected = topChoices[Math.floor(Math.random() * topChoices.length)];
+
+    const chosen = tempPool.splice(selected.idx, 1)[0];
     orderedList.push(chosen);
     cursor = chosen;
   }
@@ -1597,20 +1773,20 @@ export function buildSpotifySmartShuffleQueue(
   for (let i = 0; i < orderedList.length; i++) {
     result.push(orderedList[i]);
 
-    // Every 2 tracks, inject 1 tailored discovery track
-    if ((i + 1) % 2 === 0 && discoveryCandidates.length > 0) {
+    // Every 2-3 tracks, inject 1 tailored discovery track ("arada değişiklik önerisi")
+    if ((i + 1) % 3 === 0 && discoveryCandidates.length > 0) {
       const prev = orderedList[i];
       const scoredDisc = discoveryCandidates
         .map(c => scoreTrackAffinity(prev, c, false))
-        .filter(s => s.score > 40)
+        .filter(s => s.score > 35)
         .sort((a, b) => b.score - a.score);
 
       if (scoredDisc.length > 0) {
-        const topDisc = scoredDisc[0];
+        const topDisc = scoredDisc[Math.floor(Math.random() * Math.min(3, scoredDisc.length))];
         result.push({
           ...topDisc.track,
           isSmartRecommendation: true,
-          recommendationReason: `✨ Akıllı Karışık: ${prev.artist} tarzı öneri`
+          recommendationReason: `✨ Özel Keşif: Arada Değişiklik Önerisi (${topDisc.track.artist})`
         });
         const rIdx = discoveryCandidates.findIndex(d => d.id === topDisc.track.id);
         if (rIdx !== -1) discoveryCandidates.splice(rIdx, 1);
@@ -1622,49 +1798,83 @@ export function buildSpotifySmartShuffleQueue(
 }
 
 // ----------------------------------------------------
-// 5.1 Spotify Balanced Shuffle (Bregman Dispersion Algorithm)
-// Distributes same-artist tracks evenly across the queue
+// 5.1 High-Entropy True Fisher-Yates Shuffle with Artist Dispersion
 // ----------------------------------------------------
-export function getBalancedShuffleQueue(tracks: Track[], currentTrackId?: string): Track[] {
-  if (!tracks || tracks.length <= 2) return [...(tracks || [])];
+export function createTrueShuffleQueue<T extends { id?: string; artist?: string }>(
+  items: T[],
+  excludeFilter?: (item: T) => boolean
+): T[] {
+  if (!items || items.length <= 1) return [...(items || [])];
 
-  const pool = tracks.filter(t => t.id !== currentTrackId);
+  const pool = excludeFilter ? items.filter(t => !excludeFilter(t)) : [...items];
   if (pool.length <= 1) return pool;
 
-  // 1. Group tracks by artist
-  const artistBins: Record<string, Track[]> = {};
-  for (const t of pool) {
-    const key = (t.artist || 'Unknown').trim().toLowerCase();
+  // 1. Group items by artist
+  const artistBins: Record<string, T[]> = {};
+  for (const item of pool) {
+    const key = (item.artist || 'Unknown').trim().toLowerCase();
     if (!artistBins[key]) artistBins[key] = [];
-    artistBins[key].push(t);
+    artistBins[key].push(item);
   }
 
-  // 2. Shuffle each artist's internal list
-  for (const artist in artistBins) {
-    const list = artistBins[artist];
-    for (let i = list.length - 1; i > 0; i--) {
+  // 2. High-entropy Fisher-Yates shuffle within each bin
+  const binArrays = Object.values(artistBins);
+  for (const bin of binArrays) {
+    for (let i = bin.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
-      [list[i], list[j]] = [list[j], list[i]];
+      [bin[i], bin[j]] = [bin[j], bin[i]];
     }
   }
 
-  // 3. Sort bins by size descending
-  const sortedBins = Object.values(artistBins).sort((a, b) => b.length - a.length);
+  // 3. True Fisher-Yates shuffle on bin order
+  for (let i = binArrays.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [binArrays[i], binArrays[j]] = [binArrays[j], binArrays[i]];
+  }
 
-  // 4. Interleave items with spacing (Bregman dispersion)
-  const result: Track[] = [];
-  const maxLen = sortedBins[0].length;
+  // 4. Sort bins by size descending so largest artists are dispersed first
+  binArrays.sort((a, b) => b.length - a.length);
+
+  // 5. Interleave with random round perturbation (Bregman dispersion)
+  const result: T[] = [];
+  const maxLen = Math.max(...binArrays.map(b => b.length));
 
   for (let step = 0; step < maxLen; step++) {
-    const roundBins = [...sortedBins].sort(() => Math.random() - 0.5);
+    // True Fisher-Yates on the round order
+    const roundBins = [...binArrays];
+    for (let i = roundBins.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [roundBins[i], roundBins[j]] = [roundBins[j], roundBins[i]];
+    }
+
     for (const bin of roundBins) {
       if (bin.length > step) {
-        result.push(bin[step]);
+        // Prevent consecutive same artist if possible
+        const candidate = bin[step];
+        const lastItem = result[result.length - 1];
+        if (
+          lastItem &&
+          lastItem.artist &&
+          candidate.artist &&
+          lastItem.artist.toLowerCase().trim() === candidate.artist.toLowerCase().trim() &&
+          bin.length > step + 1
+        ) {
+          // Swap with next in bin if available
+          const nextCand = bin[step + 1];
+          bin[step + 1] = candidate;
+          result.push(nextCand);
+        } else {
+          result.push(candidate);
+        }
       }
     }
   }
 
   return result;
+}
+
+export function getBalancedShuffleQueue(tracks: Track[], currentTrackId?: string): Track[] {
+  return createTrueShuffleQueue(tracks, t => t.id === currentTrackId);
 }
 
 // ----------------------------------------------------
