@@ -1,9 +1,10 @@
 import React, { useState, useMemo, memo, useEffect, useRef } from 'react';
 import { motion } from 'motion/react';
-import { Play, Pause, Shuffle, DownloadCloud, HardDrive, Share2, Users, Palette, Plus, Search, Trash2, ArrowUp, ArrowDown, Music, ThumbsUp, MoreHorizontal, Sparkles, CheckCircle2, Link as LinkIcon, Radio, Clock, LayoutList, ListFilter, Zap, Heart } from 'lucide-react';
+import { Play, Pause, Shuffle, DownloadCloud, HardDrive, Share2, Users, Palette, Plus, Search, Trash2, ArrowUp, ArrowDown, Music, ThumbsUp, MoreHorizontal, Sparkles, CheckCircle2, Link as LinkIcon, Radio, Clock, LayoutList, ListFilter, Zap, Heart, RefreshCw } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Playlist, Track } from '../../types';
 import { isTrackFollowed, toggleFollowTrack, subscribeToFollowChanges } from '../../services/followService';
+import { fetchPlaylistRadioRecommendations } from '../../services/recommendationService';
 
 interface PlaylistDetailProps {
   playlist: Playlist;
@@ -25,6 +26,8 @@ interface PlaylistDetailProps {
   onDownloadTrackOffline: (track: Track) => Promise<void>;
   onDownloadAllOffline: (playlist: Playlist) => Promise<void>;
   onStartSongRadio?: (track: Track) => void;
+  onAddTrack?: (playlistId: string, track: Track) => void;
+  onStartPlaylistRadio?: (playlist: Playlist) => void;
 }
 
 export const PlaylistDetail: React.FC<PlaylistDetailProps> = memo(({
@@ -46,7 +49,9 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = memo(({
   onAddToQueue,
   onDownloadTrackOffline,
   onDownloadAllOffline,
-  onStartSongRadio
+  onStartSongRadio,
+  onAddTrack,
+  onStartPlaylistRadio
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'custom' | 'title' | 'artist' | 'duration' | 'upvotes'>('custom');
@@ -55,6 +60,42 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = memo(({
   const [isCompactView, setIsCompactView] = useState(false);
   const [visibleCount, setVisibleCount] = useState(80);
   const [followUpdateTick, setFollowUpdateTick] = useState(0);
+
+  // Recommendations & Playlist Radio state
+  const [recommendations, setRecommendations] = useState<Track[]>([]);
+  const [isLoadingRecs, setIsLoadingRecs] = useState<boolean>(false);
+  const [radioTheme, setRadioTheme] = useState<string>('');
+  const [addedRecTrackIds, setAddedRecTrackIds] = useState<Set<string>>(new Set());
+
+  const loadPlaylistRecs = async (forceRefresh: boolean = false) => {
+    if (!playlist) return;
+    setIsLoadingRecs(true);
+    try {
+      const res = await fetchPlaylistRadioRecommendations(playlist, {
+        count: 8,
+        refresh: forceRefresh,
+        seed: Math.floor(Math.random() * 1000000)
+      });
+      setRecommendations(res.tracks);
+      setRadioTheme(res.themeName);
+    } catch (err) {
+      console.warn('Failed to load playlist recommendations:', err);
+    } finally {
+      setIsLoadingRecs(false);
+    }
+  };
+
+  useEffect(() => {
+    loadPlaylistRecs(false);
+  }, [playlist.id]);
+
+  const handleAddRecTrack = (track: Track) => {
+    if (onAddTrack) {
+      onAddTrack(playlist.id, track);
+      setAddedRecTrackIds(prev => new Set([...prev, track.id]));
+      confetti({ particleCount: 35, spread: 60 });
+    }
+  };
 
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -607,6 +648,156 @@ export const PlaylistDetail: React.FC<PlaylistDetailProps> = memo(({
             )}
           </div>
         )}
+
+        {/* Spotify-style Playlist Radio & Recommendations Section */}
+        <div className="mt-12 pt-8 border-t border-neutral-800/80 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                  <Radio className="w-4 h-4" />
+                </div>
+                <h3 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                  <span>Önerilen Şarkılar & Liste Radyosu</span>
+                  {radioTheme && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-medium">
+                      {radioTheme}
+                    </span>
+                  )}
+                </h3>
+              </div>
+              <p className="text-xs text-neutral-400 mt-1">
+                Beğendiğin sanatçılar & şarkılar öncelikli, arada değişiklik için taze öneriler
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => loadPlaylistRecs(true)}
+                disabled={isLoadingRecs}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 rounded-xl text-xs font-bold transition cursor-pointer disabled:opacity-50"
+                title="Yeni Şarkı Önerileri Getir"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoadingRecs ? 'animate-spin text-emerald-400' : ''}`} />
+                <span>Yenile</span>
+              </button>
+
+              {onStartPlaylistRadio && (
+                <button
+                  onClick={() => onStartPlaylistRadio(playlist)}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-black rounded-xl text-xs font-bold transition shadow-sm cursor-pointer"
+                  title="Bu listenin tarzında kesintisiz radyo çal"
+                >
+                  <Radio className="w-3.5 h-3.5" />
+                  <span>Radyoyu Başlat</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {isLoadingRecs ? (
+            <div className="py-8 flex items-center justify-center gap-2 text-neutral-400 text-xs">
+              <RefreshCw className="w-4 h-4 animate-spin text-emerald-400" />
+              <span>Listenize ve beğendiğiniz sanatçılara göre öneriler taranıyor...</span>
+            </div>
+          ) : recommendations.length === 0 ? (
+            <div className="py-6 text-center text-xs text-neutral-500">
+              Şu an gösterilecek öneri bulunamadı. "Yenile" butonuna tıklayarak tekrar deneyin.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+              {recommendations.map((track) => {
+                const isAdded = addedRecTrackIds.has(track.id) || (playlist.tracks || []).some(t => t.id === track.id || t.title.toLowerCase().trim() === track.title.toLowerCase().trim());
+                const isFav = track.recommendationReason?.includes('Beğendiğin');
+                const isDiscovery = track.recommendationReason?.includes('Değişiklik') || track.recommendationReason?.includes('Keşif');
+
+                return (
+                  <div
+                    key={track.id}
+                    className="p-2.5 rounded-xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-neutral-700 transition flex items-center justify-between gap-3 group"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="relative w-10 h-10 rounded-lg overflow-hidden shrink-0 border border-neutral-800">
+                        <img
+                          src={track.coverUrl}
+                          alt={track.title}
+                          className="w-full h-full object-cover"
+                        />
+                        <button
+                          onClick={() => onPlayTrack(track, recommendations, `📻 ${playlist.name} Radyosu`)}
+                          className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition cursor-pointer"
+                          title="Dinle"
+                        >
+                          <Play className="w-4 h-4 fill-white" />
+                        </button>
+                      </div>
+
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-white truncate flex items-center gap-1.5">
+                          <span className="truncate">{track.title}</span>
+                          {isFav && (
+                            <span className="shrink-0 px-1.5 py-0.2 text-[8px] font-bold rounded-md bg-rose-500/20 text-rose-300 border border-rose-500/30 flex items-center gap-0.5">
+                              <Heart className="w-2 h-2 fill-rose-400 text-rose-400" />
+                              <span>Öncelikli</span>
+                            </span>
+                          )}
+                          {isDiscovery && (
+                            <span className="shrink-0 px-1.5 py-0.2 text-[8px] font-bold rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                              ✨ Değişiklik
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-neutral-400 truncate">{track.artist}</div>
+                        {track.recommendationReason && (
+                          <div className="text-[9px] text-emerald-400/90 truncate mt-0.5">
+                            {track.recommendationReason}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {onStartSongRadio && (
+                        <button
+                          onClick={() => onStartSongRadio(track)}
+                          className="p-1.5 text-neutral-400 hover:text-amber-400 rounded-lg hover:bg-neutral-800 transition cursor-pointer"
+                          title="Şarkı Radyosu Başlat"
+                        >
+                          <Radio className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+
+                      {onAddTrack && (
+                        <button
+                          onClick={() => handleAddRecTrack(track)}
+                          disabled={isAdded}
+                          className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                            isAdded
+                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                              : 'bg-neutral-800 hover:bg-neutral-700 text-white border border-neutral-700 hover:border-neutral-600'
+                          }`}
+                          title={isAdded ? 'Listede mevcut' : 'Listeye Ekle'}
+                        >
+                          {isAdded ? (
+                            <>
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span className="hidden sm:inline">Eklendi</span>
+                            </>
+                          ) : (
+                            <>
+                              <Plus className="w-3.5 h-3.5" />
+                              <span className="hidden sm:inline">Ekle</span>
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

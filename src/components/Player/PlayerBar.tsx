@@ -1,5 +1,5 @@
 import React, { useState, memo, useEffect } from 'react';
-import { Play, Pause, SkipBack, SkipForward, Repeat, Shuffle, Volume2, VolumeX, Maximize2, Mic2, ListMusic, Sliders, WifiOff, HardDrive, Repeat1, Radio, Sparkles, Heart, Tv, X } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Repeat, Shuffle, Volume2, VolumeX, Maximize2, Mic2, ListMusic, Sliders, WifiOff, HardDrive, Repeat1, Radio, Sparkles, Heart, Tv, X, RefreshCw } from 'lucide-react';
 import { Track, RepeatMode, ShuffleMode, AudioSettings } from '../../types';
 import { detectTrackTheme } from '../../services/recommendationService';
 import { isTrackFollowed, toggleFollowTrack, subscribeToFollowChanges } from '../../services/followService';
@@ -19,6 +19,7 @@ interface PlayerBarProps {
   isRadioActive?: boolean;
   radioSeedTrack?: Track | null;
   onExitRadio?: () => void;
+  onRefreshRadio?: () => void;
   onTogglePlay: () => void;
   onPrev: () => void;
   onNext: () => void;
@@ -51,6 +52,7 @@ export const PlayerBar: React.FC<PlayerBarProps> = memo(({
   isRadioActive = false,
   radioSeedTrack,
   onExitRadio,
+  onRefreshRadio,
   onTogglePlay,
   onPrev,
   onNext,
@@ -156,6 +158,18 @@ export const PlayerBar: React.FC<PlayerBarProps> = memo(({
                     <span className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
                       <Radio className="w-2.5 h-2.5 animate-pulse text-amber-400" />
                       <span>{radioSeedTrack ? `${radioSeedTrack.artist} Radyosu` : 'Radyo'}</span>
+                      {onRefreshRadio && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onRefreshRadio();
+                          }}
+                          className="ml-0.5 hover:text-emerald-300 transition cursor-pointer p-0.5 rounded hover:bg-amber-500/30"
+                          title="Radyoyu Yepyeni Şarkılarla Yenile"
+                        >
+                          <RefreshCw className="w-2.5 h-2.5" />
+                        </button>
+                      )}
                       {onExitRadio && (
                         <button
                           onClick={(e) => {

@@ -538,17 +538,41 @@ class AudioEngine {
     return this.ytLoadingPromise;
   }
 
+  private stallCounter = 0;
+  private lastYtPos = 0;
+
   private startYtInterval() {
     this.clearYtInterval();
     this.ytInterval = setInterval(() => {
       if (this.ytPlayer && this.activeMode === 'youtube') {
         try {
           const state = typeof this.ytPlayer.getPlayerState === 'function' ? this.ytPlayer.getPlayerState() : 1;
-          // Only check and trigger update if player is playing (state 1) or buffering (state 3)
-          if (state !== 1 && state !== 3) return;
-
           const cur = this.ytPlayer.getCurrentTime() || 0;
           const dur = this.ytPlayer.getDuration() || (this.currentTrack?.duration || 180);
+
+          // Background stall watchdog: If user has NOT paused, but player got stuck in paused (2), unstarted (-1), or buffering (3)
+          if (!this.isUserPaused && (state === 2 || state === -1 || (state === 3 && cur === this.lastYtPos))) {
+            this.stallCounter++;
+            if (this.stallCounter === 3) {
+              // Try kickstarting playback with silent audio keep-alive and playVideo
+              this.silentAudio?.play().catch(() => {});
+              try { this.ytPlayer.playVideo(); } catch {}
+            } else if (this.stallCounter >= 6) {
+              // Stalled for ~3 seconds in background: automatically recover by falling back to HTML5 stream!
+              this.stallCounter = 0;
+              console.warn('Background playback stall detected, auto-recovering via HTML5 stream.');
+              if (this.currentTrack) {
+                this.playViaHtml5(this.currentTrack, cur || this.lastYtPos || 0);
+              }
+              return;
+            }
+          } else if (state === 1) {
+            this.stallCounter = 0;
+            this.lastYtPos = cur;
+          }
+
+          // Only check and trigger update if player is playing (state 1) or buffering (state 3)
+          if (state !== 1 && state !== 3) return;
 
           const now = performance.now();
           if (now - this.lastMediaSessionPosUpdateTs > 1000) {
@@ -1062,6 +1086,27 @@ class AudioEngine {
           this.ytPlayer.playVideo();
           this.startYtInterval();
           this.updateMediaSessionState('playing');
+          if (this.onPlayStateChangeCallback) {
+            this.onPlayStateChangeCallback(true);
+          }
+
+          // Background watchdog: If YouTube doesn't start progressing within 1100ms (common when tab is in background),
+          // fallback to HTML5 audio which has native background audio privileges in mobile OS!
+          setTimeout(() => {
+            if (!this.isUserPaused && this.activeMode === 'youtube' && this.ytPlayer) {
+              try {
+                const s = typeof this.ytPlayer.getPlayerState === 'function' ? this.ytPlayer.getPlayerState() : -1;
+                if (s !== 1 && s !== 3) {
+                  console.warn('YouTube resume was throttled in background, falling back to HTML5 audio.');
+                  if (this.currentTrack) {
+                    const pos = typeof this.ytPlayer.getCurrentTime === 'function' ? this.ytPlayer.getCurrentTime() : 0;
+                    this.playViaHtml5(this.currentTrack, pos);
+                  }
+                }
+              } catch {}
+            }
+          }, 1100);
+
           return;
         } catch {}
       }
@@ -1074,6 +1119,9 @@ class AudioEngine {
       await this.ctx.resume();
     }
     this.updateMediaSessionState('playing');
+    if (this.onPlayStateChangeCallback) {
+      this.onPlayStateChangeCallback(true);
+    }
     return this.audio.play();
   }
 

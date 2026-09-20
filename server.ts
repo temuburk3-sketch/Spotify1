@@ -221,7 +221,7 @@ async function searchFullSongVideoId(title: string, artist: string, excludeId?: 
               if (parts.length === 2) durSecs = parts[0] * 60 + parts[1];
               else if (parts.length === 3) durSecs = parts[0] * 3600 + parts[1] * 60 + parts[2];
 
-              if (durSecs >= 40 && durSecs <= 900) {
+              if (durSecs >= 8 && durSecs <= 7200) {
                 addCandidate(v.videoId, durSecs);
               }
             }
@@ -267,7 +267,7 @@ async function searchFullSongVideoId(title: string, artist: string, excludeId?: 
                   if (parts.length === 2) durSecs = parts[0] * 60 + parts[1];
                   else if (parts.length === 3) durSecs = parts[0] * 3600 + parts[1] * 60 + parts[2];
 
-                  if (durSecs >= 40 && durSecs <= 900) {
+                  if (durSecs >= 8 && durSecs <= 7200) {
                     addCandidate(videoId, durSecs);
                   }
                 }
@@ -421,14 +421,136 @@ async function findBestAudioMatch(title: string, artist: string) {
   return null;
 }
 
-// Extract Spotify Playlist, Track, or Album with full tracklist & matching original audio
+// Resolve YouTube video or playlist URL directly into playable tracks
+async function resolveYouTubeUrl(url: string) {
+  const trimmed = url.trim();
+  const videoMatch = trimmed.match(/(?:youtube\.com\/(?:watch\?.*?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i);
+  const listMatch = trimmed.match(/[?&]list=([a-zA-Z0-9_-]+)/i);
+
+  if (listMatch && !videoMatch) {
+    const listId = listMatch[1];
+    const plRes = await fetch(`https://www.youtube.com/playlist?list=${listId}`, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Cookie": "SOCS=CAESEwgDEgk2NDU4Mzc3Mzg; CONSENT=YES+cb.20230531-04-p0.en+FX+999; PREF=tz=Europe.Istanbul&hl=tr&gl=TR&f6=40000000; GPS=1"
+      }
+    });
+    if (plRes.ok) {
+      const html = await plRes.text();
+      let plTitle = "YouTube Çalma Listesi";
+      const titleMatch = html.match(/<title>(.*?)<\/title>/);
+      if (titleMatch) plTitle = titleMatch[1].replace(" - YouTube", "").trim();
+
+      const tracks: any[] = [];
+      const match = html.match(/var ytInitialData = ({.*?});<\/script>/) || html.match(/ytInitialData\s*=\s*({.*?});/);
+      if (match) {
+        try {
+          const data = JSON.parse(match[1]);
+          const contents = data?.contents?.twoColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents?.[0]?.itemSectionRenderer?.contents?.[0]?.playlistVideoListRenderer?.contents;
+          if (Array.isArray(contents)) {
+            contents.forEach((item: any, idx: number) => {
+              const v = item.playlistVideoRenderer;
+              if (v && v.videoId) {
+                const trkTitle = v.title?.runs?.[0]?.text || v.title?.simpleText || `Video #${idx + 1}`;
+                const trkArtist = v.shortBylineText?.runs?.[0]?.text || "YouTube";
+                const durText = v.lengthText?.simpleText || "";
+                const parts = durText.split(':').map(Number);
+                let durSecs = 180;
+                if (parts.length === 2) durSecs = parts[0] * 60 + parts[1];
+                else if (parts.length === 3) durSecs = parts[0] * 3600 + parts[1] * 60 + parts[2];
+                tracks.push({
+                  id: `yt_${v.videoId}_${idx}`,
+                  title: trkTitle,
+                  artist: trkArtist,
+                  album: plTitle,
+                  duration: durSecs,
+                  coverUrl: `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`,
+                  audioUrl: "",
+                  youtubeId: v.videoId,
+                  source: 'stream' as const,
+                  addedAt: new Date().toISOString(),
+                  genre: 'YouTube & Medya'
+                });
+              }
+            });
+          }
+        } catch {}
+      }
+
+      if (tracks.length > 0) {
+        return {
+          type: 'playlist' as const,
+          id: listId,
+          title: plTitle,
+          author: "YouTube",
+          coverUrl: tracks[0]?.coverUrl || "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600",
+          tracks
+        };
+      }
+    }
+  }
+
+  if (videoMatch) {
+    const videoId = videoMatch[1];
+    let videoTitle = "YouTube Video / Ses";
+    let channelName = "YouTube";
+    try {
+      const oeRes = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`);
+      if (oeRes.ok) {
+        const oe = await oeRes.json();
+        if (oe.title) videoTitle = oe.title;
+        if (oe.author_name) channelName = oe.author_name;
+      }
+    } catch {}
+
+    let cleanArtist = channelName;
+    let cleanTitle = videoTitle;
+    if (videoTitle.includes(" - ")) {
+      const parts = videoTitle.split(" - ");
+      cleanArtist = parts[0].trim();
+      cleanTitle = parts.slice(1).join(" - ").trim();
+    }
+
+    return {
+      type: 'track' as const,
+      id: videoId,
+      title: videoTitle,
+      author: cleanArtist,
+      coverUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+      tracks: [{
+        id: `yt_${videoId}_0`,
+        title: cleanTitle,
+        artist: cleanArtist,
+        album: cleanTitle,
+        duration: 210,
+        coverUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+        audioUrl: "",
+        youtubeId: videoId,
+        source: 'stream' as const,
+        addedAt: new Date().toISOString(),
+        genre: 'YouTube & Medya'
+      }]
+    };
+  }
+
+  throw new Error("Geçersiz YouTube bağlantısı. Lütfen geçerli bir YouTube video veya çalma listesi bağlantısı girin.");
+}
+
+// Extract Spotify Playlist, Track, Album, Episode, or Show with full tracklist & matching original audio
 async function resolveSpotifyUrl(url: string) {
   const trimmed = url.trim();
-  let type: 'playlist' | 'track' | 'album' | 'artist' | 'unknown' = 'unknown';
+
+  // If user pasted a YouTube link into the import input, route seamlessly to YouTube resolver
+  if (trimmed.includes("youtube.com") || trimmed.includes("youtu.be")) {
+    return resolveYouTubeUrl(trimmed);
+  }
+
+  let type: 'playlist' | 'track' | 'album' | 'artist' | 'episode' | 'show' | 'unknown' = 'unknown';
   let id = '';
 
-  // Support international localized URLs (/intl-tr/playlist/..., /intl-en/..., etc.), query params, URIs
-  const match = trimmed.match(/open\.spotify\.com\/(?:[a-zA-Z]{2}(?:-[a-zA-Z]{2})?\/)?(?:intl-[a-z]{2}\/)?(playlist|track|album|artist)\/([a-zA-Z0-9]+)/i);
+  // Support international localized URLs (/intl-tr/playlist/..., /intl-en/..., etc.), query params, URIs, episodes, and shows
+  const match = trimmed.match(/open\.spotify\.com\/(?:[a-zA-Z]{2}(?:-[a-zA-Z]{2})?\/)?(?:intl-[a-z]{2}\/)?(playlist|track|album|artist|episode|show)\/([a-zA-Z0-9]+)/i);
   if (match) {
     type = match[1].toLowerCase() as any;
     id = match[2];
@@ -447,15 +569,16 @@ async function resolveSpotifyUrl(url: string) {
   }
 
   if (!id) {
-    throw new Error("Geçersiz Spotify bağlantı formatı. Lütfen geçerli bir Spotify şarkı veya liste linki girin.");
+    throw new Error("Geçersiz Spotify veya medya bağlantı formatı. Lütfen geçerli bir Spotify ya da YouTube linki girin.");
   }
 
-  // 1. Method A: Spotify Web Player API (Retrieves 100% of all tracks without drop or limits)
+  // 1. Method A: Spotify Web Player API (Retrieves 100% of all tracks, episodes, and podcasts without limits)
   const token = await getSpotifyWebToken();
   if (token) {
     try {
       if (type === 'playlist') {
-        const pRes = await fetch(`https://api.spotify.com/v1/playlists/${id}`, {
+        // Crucial: additional_types=track,episode enables importing podcast episodes and poetry recitations in playlists!
+        const pRes = await fetch(`https://api.spotify.com/v1/playlists/${id}?additional_types=track,episode`, {
           headers: { "Authorization": `Bearer ${token}` }
         });
         if (pRes.ok) {
@@ -468,11 +591,12 @@ async function resolveSpotifyUrl(url: string) {
           let nextUrl = pData.tracks?.next;
           let pages = 0;
 
-          // Paginate up to 20 pages (up to 1,000 tracks) to import complete large playlists
+          // Paginate up to 25 pages (up to 1,000 tracks/episodes) to import complete large playlists
           while (nextUrl && allItems.length < 1000 && pages < 25) {
             pages++;
             try {
-              const nextRes = await fetch(nextUrl, {
+              const fetchUrl = nextUrl.includes('additional_types') ? nextUrl : `${nextUrl}${nextUrl.includes('?') ? '&' : '?'}additional_types=track,episode`;
+              const nextRes = await fetch(fetchUrl, {
                 headers: {
                   "Authorization": `Bearer ${token}`,
                   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -497,28 +621,38 @@ async function resolveSpotifyUrl(url: string) {
           }
 
           const tracks = allItems
-            .filter((item: any) => item && (item.track || item.id))
+            .filter((item: any) => item && (item.track || item.episode || item.id))
             .slice(0, 1000)
             .map((item: any, idx: number) => {
-              const t = item.track || item;
-              const trkTitle = t.name || `Şarkı #${idx + 1}`;
-              const trkArtist = t.artists?.map((a: any) => a.name).join(", ") || listAuthor;
-              const trkCover = t.album?.images?.[0]?.url || listCover;
-              const trkDuration = t.duration_ms ? Math.round(t.duration_ms / 1000) : (t.duration ? Math.round(t.duration / 1000) : 190);
+              const t = item.track || item.episode || item;
+              const isEpisode = t.type === 'episode' || !!t.show;
+              const trkTitle = t.name || t.title || `Parça #${idx + 1}`;
+              let trkArtist = t.artists?.map((a: any) => a.name).join(", ") || t.show?.name || t.show?.publisher || t.publisher || listAuthor;
+              
+              // If title has format "Artist - Title", extract canonical artist name
+              if (trkTitle.includes(" - ") && (trkArtist === listAuthor || trkArtist === "Spotify" || !trkArtist)) {
+                const parts = trkTitle.split(" - ");
+                if (parts.length >= 2 && parts[0].trim()) {
+                  trkArtist = parts[0].trim();
+                }
+              }
+
+              const trkCover = t.album?.images?.[0]?.url || t.images?.[0]?.url || t.show?.images?.[0]?.url || listCover;
+              const trkDuration = t.duration_ms ? Math.round(t.duration_ms / 1000) : (t.duration ? Math.round(t.duration / 1000) : 180);
               const trkId = t.id || `trk_${idx}`;
 
               return {
                 id: `sp_${id}_${trkId}_${idx}`,
                 title: trkTitle,
                 artist: trkArtist,
-                album: t.album?.name || listTitle,
+                album: t.album?.name || t.show?.name || listTitle,
                 duration: trkDuration,
                 coverUrl: trkCover,
-                audioUrl: t.preview_url || "",
+                audioUrl: t.audio_preview_url || t.preview_url || "",
                 source: 'spotify' as const,
                 spotifyId: trkId,
                 addedAt: new Date().toISOString(),
-                genre: 'Spotify Hit'
+                genre: isEpisode ? 'Şiir & Podcast / Ses Kaydı' : 'Spotify Hit'
               };
             });
 
@@ -529,6 +663,82 @@ async function resolveSpotifyUrl(url: string) {
             author: listAuthor,
             coverUrl: listCover,
             tracks
+          };
+        }
+      } else if (type === 'episode') {
+        const epRes = await fetch(`https://api.spotify.com/v1/episodes/${id}`, {
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        if (epRes.ok) {
+          const epData = await epRes.json();
+          const epTitle = epData.name || "Podcast / Şiir Bölümü";
+          let epArtist = epData.show?.name || epData.show?.publisher || "Spotify";
+          if (epTitle.includes(" - ")) {
+            const parts = epTitle.split(" - ");
+            if (parts.length >= 2) epArtist = parts[0].trim();
+          }
+          const epCover = epData.images?.[0]?.url || epData.show?.images?.[0]?.url || "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600";
+          const epDuration = epData.duration_ms ? Math.round(epData.duration_ms / 1000) : 180;
+
+          return {
+            type: 'episode',
+            id,
+            title: epTitle,
+            author: epArtist,
+            coverUrl: epCover,
+            tracks: [{
+              id: `sp_ep_${id}_0`,
+              title: epTitle,
+              artist: epArtist,
+              album: epData.show?.name || epTitle,
+              duration: epDuration,
+              coverUrl: epCover,
+              audioUrl: epData.audio_preview_url || "",
+              source: 'spotify' as const,
+              spotifyId: id,
+              addedAt: new Date().toISOString(),
+              genre: 'Şiir & Podcast / Ses Kaydı'
+            }]
+          };
+        }
+      } else if (type === 'show') {
+        const showRes = await fetch(`https://api.spotify.com/v1/shows/${id}?limit=50`, {
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        if (showRes.ok) {
+          const showData = await showRes.json();
+          const showTitle = showData.name || "Podcast / Ses Kaydı";
+          const showAuthor = showData.publisher || "Yayıncı";
+          const showCover = showData.images?.[0]?.url || "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600";
+          const episodes = (showData.episodes?.items || []).map((ep: any, idx: number) => {
+            const epName = ep.name || `Bölüm #${idx + 1}`;
+            let epArtist = showAuthor;
+            if (epName.includes(" - ")) {
+              const parts = epName.split(" - ");
+              if (parts.length >= 2) epArtist = parts[0].trim();
+            }
+            return {
+              id: `sp_show_${id}_${ep.id || idx}`,
+              title: epName,
+              artist: epArtist,
+              album: showTitle,
+              duration: ep.duration_ms ? Math.round(ep.duration_ms / 1000) : 180,
+              coverUrl: ep.images?.[0]?.url || showCover,
+              audioUrl: ep.audio_preview_url || "",
+              source: 'spotify' as const,
+              spotifyId: ep.id || `ep_${idx}`,
+              addedAt: new Date().toISOString(),
+              genre: 'Şiir & Podcast / Ses Kaydı'
+            };
+          });
+
+          return {
+            type: 'show',
+            id,
+            title: showTitle,
+            author: showAuthor,
+            coverUrl: showCover,
+            tracks: episodes
           };
         }
       } else if (type === 'album') {
@@ -690,41 +900,58 @@ async function resolveSpotifyUrl(url: string) {
 
   const rawTracks: any[] = [];
 
-  if (type === "track") {
+  if (type === "track" || type === "episode") {
     rawTracks.push(entity);
   } else if (entity.trackList && Array.isArray(entity.trackList)) {
     rawTracks.push(...entity.trackList);
   } else if (entity.tracks && Array.isArray(entity.tracks.items)) {
     rawTracks.push(...entity.tracks.items);
+  } else if (entity.episodes && Array.isArray(entity.episodes.items)) {
+    rawTracks.push(...entity.episodes.items);
+  } else if (entity.episodes && Array.isArray(entity.episodes)) {
+    rawTracks.push(...entity.episodes);
+  } else if (entity.items && Array.isArray(entity.items)) {
+    rawTracks.push(...entity.items);
   }
 
   // Process tracks
   const tracks = rawTracks.map((item: any, idx: number) => {
-    const t = item.track || item;
-    const trackTitle = t.title || t.name || `Şarkı #${idx + 1}`;
-    const trackArtist = t.subtitle || (t.artists && t.artists.map((a: any) => a.name).join(", ")) || author;
+    const t = item.track || item.episode || item;
+    const isEpisode = t.type === 'episode' || !!t.show;
+    const trackTitle = t.title || t.name || `Parça #${idx + 1}`;
+    let trackArtist = t.subtitle || (t.artists && t.artists.map((a: any) => a.name).join(", ")) || t.show?.name || author;
+
+    // If title has format "Artist - Title", extract canonical artist name
+    if (trackTitle.includes(" - ") && (trackArtist === author || trackArtist === "Spotify" || !trackArtist)) {
+      const parts = trackTitle.split(" - ");
+      if (parts.length >= 2 && parts[0].trim()) {
+        trackArtist = parts[0].trim();
+      }
+    }
+
     const trackDuration = t.duration ? Math.round(t.duration / 1000) : (t.duration_ms ? Math.round(t.duration_ms / 1000) : 180);
-    const trackSpotifyId = t.id || (t.uri ? t.uri.replace("spotify:track:", "") : `trk_${idx}`);
+    const trackSpotifyId = t.id || (t.uri ? t.uri.replace("spotify:track:", "").replace("spotify:episode:", "") : `trk_${idx}`);
     const trackCover =
       t.coverArt?.sources?.[0]?.url ||
       t.visualIdentity?.image?.[0]?.url ||
       t.album?.images?.[0]?.url ||
+      t.images?.[0]?.url ||
       coverUrl;
 
-    const audioUrl = t.audioPreview?.url || t.preview_url || "";
+    const audioUrl = t.audioPreview?.url || t.audio_preview_url || t.preview_url || "";
 
     return {
       id: `sp_${trackSpotifyId}_${idx}`,
       title: trackTitle,
       artist: trackArtist,
-      album: t.album?.name || title,
+      album: t.album?.name || t.show?.name || title,
       duration: trackDuration,
       coverUrl: trackCover,
       audioUrl: audioUrl,
       source: 'spotify' as const,
       spotifyId: trackSpotifyId,
       addedAt: new Date().toISOString(),
-      genre: 'Spotify Hit'
+      genre: isEpisode ? 'Şiir & Podcast / Ses Kaydı' : 'Spotify Hit'
     };
   });
 
@@ -762,6 +989,110 @@ app.get("/api/spotify/resolve", async (req, res) => {
     console.error("Resolve error:", err);
     res.status(500).json({ error: err.message || "Spotify listesi çözümlenemedi." });
   }
+});
+
+// Universal media resolver endpoint (Spotify, YouTube, Podcasts)
+app.get("/api/media/resolve", async (req, res) => {
+  const { url } = req.query;
+  if (!url || typeof url !== "string") {
+    return res.status(400).json({ error: "url parametresi gereklidir." });
+  }
+
+  const cached = getCached(spotifyCache, url.trim());
+  if (cached) {
+    return res.json(cached);
+  }
+
+  try {
+    const result = await resolveSpotifyUrl(url);
+    setCached(spotifyCache, url.trim(), result);
+    res.json(result);
+  } catch (err: any) {
+    console.error("Media resolve error:", err);
+    res.status(500).json({ error: err.message || "Medya bağlantısı çözümlenemedi." });
+  }
+});
+
+// Resolve text list (lines of songs, poems, videos) into playable tracks
+app.post("/api/text-tracks/resolve", express.json(), async (req, res) => {
+  const { lines, listTitle = "İçe Aktarılan Liste" } = req.body;
+  if (!Array.isArray(lines) || lines.length === 0) {
+    return res.status(400).json({ error: "En az bir şarkı/ses satırı gereklidir." });
+  }
+
+  const cleanLines = lines
+    .map((l: any) => String(l || "").trim())
+    .filter((l: string) => l.length > 0 && !l.startsWith("#"))
+    .slice(0, 100); // Process up to 100 lines at once
+
+  const tracks: any[] = [];
+
+  for (let i = 0; i < cleanLines.length; i++) {
+    const line = cleanLines[i];
+    
+    // If line is a URL, resolve directly
+    if (line.startsWith("http://") || line.startsWith("https://") || line.startsWith("spotify:")) {
+      try {
+        const parsed = await resolveSpotifyUrl(line);
+        if (parsed && parsed.tracks) {
+          tracks.push(...parsed.tracks);
+          continue;
+        }
+      } catch {}
+    }
+
+    // Otherwise treat as song/poem name
+    let artist = "Sanatçı";
+    let title = line;
+    if (line.includes(" - ")) {
+      const parts = line.split(" - ");
+      artist = parts[0].trim();
+      title = parts.slice(1).join(" - ").trim();
+    } else if (line.includes(" – ")) {
+      const parts = line.split(" – ");
+      artist = parts[0].trim();
+      title = parts.slice(1).join(" – ").trim();
+    }
+
+    // Try YouTube match for immediate playability
+    try {
+      const ytMatch = await searchFullSongVideoId(title, artist);
+      const videoId = ytMatch?.youtubeId || "";
+      const cover = videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600";
+      
+      tracks.push({
+        id: `txt_${Date.now()}_${i}`,
+        title: title,
+        artist: artist,
+        album: listTitle,
+        duration: ytMatch?.duration || 195,
+        coverUrl: cover,
+        audioUrl: "",
+        youtubeId: videoId,
+        source: videoId ? 'stream' : 'spotify',
+        addedAt: new Date().toISOString(),
+        genre: 'Metin Listesi'
+      });
+    } catch {
+      tracks.push({
+        id: `txt_${Date.now()}_${i}`,
+        title: title,
+        artist: artist,
+        album: listTitle,
+        duration: 195,
+        coverUrl: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600",
+        audioUrl: "",
+        source: 'spotify',
+        addedAt: new Date().toISOString(),
+        genre: 'Metin Listesi'
+      });
+    }
+  }
+
+  res.json({
+    title: listTitle,
+    tracks
+  });
 });
 
 // Search Original Songs, Audio Streams & Lyric Phrases (Prioritizes Original Artists & High Popularity)
@@ -2313,7 +2644,9 @@ app.all("/api/radio/track", async (req, res) => {
       excludeTitles = [],
       excludeIds = [],
       likedArtists = [],
-      likedTracks = []
+      likedTracks = [],
+      refresh = false,
+      seed = 0
     } = dataSrc;
 
     const parsedLikedArtists: string[] = Array.isArray(likedArtists)
@@ -2338,12 +2671,13 @@ app.all("/api/radio/track", async (req, res) => {
     ]);
 
     const hasExclusions = excludeSet.size > 1;
+    const isRefresh = Boolean(refresh) || Number(seed) > 0;
     const userTasteSignature = [
       ...parsedLikedArtists.slice(0, 6).map(a => a.toLowerCase().trim()),
       ...parsedLikedTracks.slice(0, 6).map(t => t.toLowerCase().trim())
     ].sort().join('_');
     const radioCacheKey = `radio_${title.trim().toLowerCase()}_${artist.trim().toLowerCase()}_${genre.trim().toLowerCase()}${userTasteSignature ? `_u_${userTasteSignature}` : ''}`;
-    if (!hasExclusions) {
+    if (!hasExclusions && !isRefresh) {
       const cachedRadio: any = getCached(recommendationsCache, radioCacheKey);
       if (cachedRadio && Array.isArray(cachedRadio.tracks) && cachedRadio.tracks.length >= requestedCount) {
         // Spotify-style fresh radio: reshuffle cached tracks dynamically while maintaining artist diversity

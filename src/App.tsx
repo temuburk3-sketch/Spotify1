@@ -56,6 +56,7 @@ import {
   getSmartShuffleEnabled,
   setSmartShuffleEnabled,
   fetchThematicSongRadio,
+  fetchPlaylistRadioRecommendations,
   fetchEndlessRadioBatch,
   fetchPlaylistAutoplayTracks,
   getSpotifySmartShuffleTrack,
@@ -340,8 +341,14 @@ export default function App() {
 
     // Explicitly bind system MediaSession lock screen actions (Next, Prev, Play, Pause, Seek)
     audioEngine.setMediaSessionActionHandlers({
-      onPlay: () => handlersRef.current.handleTogglePlay?.(),
-      onPause: () => handlersRef.current.handleTogglePlay?.(),
+      onPlay: () => {
+        audioEngine.resume();
+        setIsPlaying(true);
+      },
+      onPause: () => {
+        audioEngine.pause();
+        setIsPlaying(false);
+      },
       onNext: () => handlersRef.current.handleNextTrack?.(),
       onPrev: () => handlersRef.current.handlePrevTrack?.(),
       onSeek: (to: number) => handlersRef.current.handleSeek?.(to)
@@ -799,6 +806,76 @@ export default function App() {
     }
   };
 
+  const handleRefreshRadio = async () => {
+    const seed = radioSeedRef.current || currentTrack;
+    if (!seed) {
+      showToast('Yenilenecek radyo tohumu bulunamadı');
+      return;
+    }
+    showToast('📻 Radyo yepyeni şarkılarla yenileniyor...');
+    isRadioFetchingRef.current = true;
+    try {
+      const res = await fetchThematicSongRadio(seed, 15, [seed.id, seed.title], {
+        refresh: true,
+        seed: Math.floor(Math.random() * 1000000)
+      });
+      isRadioFetchingRef.current = false;
+      if (res && Array.isArray(res.tracks) && res.tracks.length > 0) {
+        queueRef.current = res.tracks;
+        setQueue(res.tracks);
+        setPlaybackContext({
+          type: 'radio',
+          title: res.radioTitle,
+          tracks: [seed, ...res.tracks]
+        });
+        showToast(`✨ Radyo yenilendi: ${res.tracks.length} taze şarkı hazır (${res.themeName})`);
+      }
+    } catch (err) {
+      isRadioFetchingRef.current = false;
+      console.warn('Refresh radio error:', err);
+    }
+  };
+
+  const handleStartPlaylistRadio = async (playlist: Playlist) => {
+    if (!playlist || !playlist.tracks || playlist.tracks.length === 0) {
+      showToast('Boş liste için radyo başlatılamaz');
+      return;
+    }
+    showToast(`📻 "${playlist.name}" Liste Radyosu hazırlanıyor...`);
+    setIsRadioActive(true);
+    setRadioThemeName(playlist.name);
+
+    const seedTrack = playlist.tracks[0];
+    setRadioSeedTrack(seedTrack);
+    radioSeedRef.current = seedTrack;
+
+    try {
+      const res = await fetchPlaylistRadioRecommendations(playlist, {
+        count: 15,
+        refresh: true,
+        seed: Math.floor(Math.random() * 1000000)
+      });
+      if (res && res.tracks.length > 0) {
+        const firstTrack = res.tracks[0];
+        const rest = res.tracks.slice(1);
+        handlePlayTrack(firstTrack, res.tracks, `📻 ${playlist.name} Radyosu`);
+        queueRef.current = rest;
+        setQueue(rest);
+        setPlaybackContext({
+          type: 'radio',
+          title: `📻 ${playlist.name} Radyosu`,
+          tracks: res.tracks
+        });
+        showToast(`✨ ${res.tracks.length} şarkılık liste radyosu başladı (${res.themeName})`);
+      } else {
+        handlePlayTrack(seedTrack, playlist.tracks, `📻 ${playlist.name} Radyosu`);
+      }
+    } catch (err) {
+      console.warn('Playlist radio error:', err);
+      handlePlayTrack(seedTrack, playlist.tracks, `📻 ${playlist.name} Radyosu`);
+    }
+  };
+
   const handleSetSleepTimer = (minutes: number | null) => {
     setSleepTimerMins(minutes);
     if (minutes) {
@@ -1205,6 +1282,8 @@ export default function App() {
             onDownloadTrackOffline={handleDownloadTrackOffline}
             onDownloadAllOffline={handleDownloadAllOffline}
             onStartSongRadio={handleStartSongRadio}
+            onAddTrack={(targetId, track) => handleAddTracksToPlaylist([track], targetId)}
+            onStartPlaylistRadio={handleStartPlaylistRadio}
           />
         )}
 
@@ -1372,6 +1451,7 @@ export default function App() {
           isRadioActive={isRadioActive}
           radioSeedTrack={radioSeedTrack}
           onExitRadio={handleExitRadio}
+          onRefreshRadio={handleRefreshRadio}
           volume={audioSettings.volume}
           isMuted={audioSettings.muted}
           isOfflineMode={isOfflineMode}
@@ -1421,6 +1501,7 @@ export default function App() {
         isRadioActive={isRadioActive}
         radioSeedTrack={radioSeedTrack}
         onExitRadio={handleExitRadio}
+        onRefreshRadio={handleRefreshRadio}
         onTogglePlay={handleTogglePlay}
         onPrev={handlePrevTrack}
         onNext={handleNextTrack}

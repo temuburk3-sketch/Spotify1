@@ -961,7 +961,8 @@ export interface SongRadioResult {
 export async function fetchThematicSongRadio(
   seedTrack: Track,
   count: number = 15,
-  excludeIds: string[] = []
+  excludeIds: string[] = [],
+  options?: { refresh?: boolean; seed?: number }
 ): Promise<SongRadioResult> {
   const classification = detectTrackTheme(seedTrack);
   const excludeSet = new Set(excludeIds.map(id => id.toLowerCase().trim()));
@@ -984,7 +985,9 @@ export async function fetchThematicSongRadio(
         excludeTitles: Array.from(excludeSet),
         excludeIds: Array.from(excludeSet),
         likedArtists: followedArtists,
-        likedTracks: followedTracks
+        likedTracks: followedTracks,
+        refresh: options?.refresh ?? true,
+        seed: options?.seed ?? Math.floor(Math.random() * 100000)
       })
     });
 
@@ -1043,6 +1046,29 @@ export async function fetchThematicSongRadio(
   const favCandidates: typeof curatedCandidates = [];
   const discoveryCandidates: typeof curatedCandidates = [];
 
+  // Directly include matching user's followed tracks into the favorites pool!
+  const followedUserTracks = getFollowedTracks();
+  for (const fTrk of followedUserTracks) {
+    const { title: cleanTitle, artist: cleanArtist } = sanitizeTrackTitleAndArtist(fTrk.title, fTrk.artist);
+    const sanitized = { ...fTrk, title: cleanTitle, artist: cleanArtist };
+    const sKey = getCanonicalSongKey(cleanTitle);
+    if (!seenSongKeys.has(sKey) && !excludeSet.has(fTrk.id.toLowerCase().trim()) && !excludeSet.has(cleanTitle.toLowerCase().trim())) {
+      const affinity = scoreTrackAffinity(seedTrack, sanitized, false);
+      const isFavArt = isArtistFollowed(cleanArtist);
+      if (affinity.score > 25 || isFavArt) {
+        seenSongKeys.add(sKey);
+        favCandidates.push({
+          track: sanitized,
+          affinity: {
+            ...affinity,
+            score: Math.max(affinity.score, 88),
+            reason: isFavArt ? `❤️ Beğendiğin Sanatçı (${cleanArtist})` : `❤️ Beğendiğin Şarkı`
+          }
+        });
+      }
+    }
+  }
+
   for (const item of curatedCandidates) {
     const isFavArtist = isArtistFollowed(item.track.artist);
     const isFavSong = isTrackFollowed(item.track.id) || isTrackFollowed(item.track.title);
@@ -1053,11 +1079,11 @@ export async function fetchThematicSongRadio(
     }
   }
 
-  // High-entropy sort for both pools
+  // High-entropy sort for both pools to prevent repetitive orders
   const shuffleOrSort = (arr: typeof curatedCandidates) => {
     return [...arr].sort((a, b) => {
       const scoreDiff = b.affinity.score - a.affinity.score;
-      if (Math.abs(scoreDiff) < 20) {
+      if (Math.abs(scoreDiff) < 25) {
         return Math.random() - 0.5;
       }
       return scoreDiff;
@@ -1309,6 +1335,199 @@ export async function fetchPlaylistAutoplayTracks(
     continuationTitle: `✨ "${playlistTitle}" ile Uyumlu Parçalar`,
     themeName: dominantThemeName,
     tracks: []
+  };
+}
+
+// ----------------------------------------------------
+// 2.5 Playlist Radio & Smart Recommendations (Prioritizes Liked Artists & Songs + Variety)
+// ----------------------------------------------------
+
+export interface PlaylistRadioResult {
+  title: string;
+  themeName: string;
+  badge: string;
+  tracks: Track[];
+}
+
+export async function fetchPlaylistRadioRecommendations(
+  playlist: Playlist,
+  options: {
+    count?: number;
+    refresh?: boolean;
+    seed?: number;
+    excludeIds?: string[];
+  } = {}
+): Promise<PlaylistRadioResult> {
+  const count = options.count || 12;
+  const pTracks = playlist.tracks || [];
+  const followedArtists = getFollowedArtists();
+  const followedTracks = getFollowedTracks();
+
+  // Determine dominant artists and genres in this playlist
+  const artistCounts: Record<string, number> = {};
+  const genreCounts: Record<string, number> = {};
+  pTracks.forEach(t => {
+    if (t.artist) artistCounts[t.artist] = (artistCounts[t.artist] || 0) + 1;
+    if (t.genre) genreCounts[t.genre] = (genreCounts[t.genre] || 0) + 1;
+  });
+
+  const sortedArtists = Object.entries(artistCounts).sort((a, b) => b[1] - a[1]).map(e => e[0]);
+  const sortedGenres = Object.entries(genreCounts).sort((a, b) => b[1] - a[1]).map(e => e[0]);
+  const dominantTheme = sortedGenres[0] || (pTracks[0] ? detectTrackTheme(pTracks[0]).displayName : 'Türkçe Pop');
+
+  const excludeSet = new Set<string>([
+    ...pTracks.map(t => t.id.toLowerCase().trim()),
+    ...pTracks.map(t => t.title.toLowerCase().trim()),
+    ...(options.excludeIds || []).map(id => id.toLowerCase().trim())
+  ]);
+
+  // 1. Try Server-side Playlist Radio API
+  try {
+    const res = await fetch('/api/radio/playlist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        playlistTitle: playlist.name,
+        sampleArtists: sortedArtists.slice(0, 6),
+        theme: dominantTheme,
+        seedTrack: pTracks[pTracks.length - 1] || null,
+        count,
+        excludeTitles: Array.from(excludeSet),
+        excludeIds: Array.from(excludeSet),
+        likedArtists: followedArtists,
+        likedTracks: followedTracks.map(t => t.title),
+        refresh: options.refresh ?? true,
+        seed: options.seed ?? Math.floor(Math.random() * 100000)
+      })
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.tracks) && data.tracks.length > 0) {
+        const enriched = data.tracks
+          .filter((t: Track) => !excludeSet.has(t.title.toLowerCase().trim()) && !excludeSet.has(t.id.toLowerCase().trim()))
+          .map((t: Track) => {
+            const isFavArt = isArtistFollowed(t.artist);
+            const isFavSong = isTrackFollowed(t.id) || isTrackFollowed(t.title);
+            let reason = t.recommendationReason;
+            if (isFavArt) reason = `❤️ Beğendiğin Sanatçı (${t.artist})`;
+            else if (isFavSong) reason = `❤️ Beğendiğin Şarkı`;
+            return {
+              ...t,
+              isSmartRecommendation: true,
+              recommendationReason: reason || `📻 ${playlist.name} Radyo Uyumu`
+            };
+          });
+
+        if (enriched.length >= Math.min(count, 4)) {
+          return {
+            title: `📻 ${playlist.name} Radyosu`,
+            themeName: dominantTheme,
+            badge: 'Özel Radyo',
+            tracks: applyArtistDiversityFilter(enriched, sortedArtists[0] || '', 2, 3).slice(0, count)
+          };
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Playlist radio server error, compiling client-side radio:', err);
+  }
+
+  // 2. Client-side compilation: High prioritization of User's Liked Artists & Liked Songs + Discovery Variety
+  const favCandidates: { track: Track; reason: string; score: number }[] = [];
+  const discoveryCandidates: { track: Track; reason: string; score: number }[] = [];
+  const seenKeys = new Set<string>();
+
+  // A. Check user's followed tracks first
+  for (const fTrk of followedTracks) {
+    const sKey = getCanonicalSongKey(fTrk.title);
+    if (!excludeSet.has(fTrk.id.toLowerCase().trim()) && !excludeSet.has(fTrk.title.toLowerCase().trim()) && !seenKeys.has(sKey)) {
+      seenKeys.add(sKey);
+      favCandidates.push({
+        track: fTrk,
+        reason: `❤️ Beğendiğin Şarkı (${fTrk.artist})`,
+        score: 98
+      });
+    }
+  }
+
+  // B. Check POPULAR_ORIGINAL_HITS
+  const anchorTrack = pTracks[pTracks.length - 1] || pTracks[0];
+  for (const hit of POPULAR_ORIGINAL_HITS) {
+    const { title: cleanTitle, artist: cleanArtist } = sanitizeTrackTitleAndArtist(hit.title, hit.artist);
+    const sKey = getCanonicalSongKey(cleanTitle);
+    if (excludeSet.has(hit.id.toLowerCase().trim()) || excludeSet.has(cleanTitle.toLowerCase().trim()) || seenKeys.has(sKey)) {
+      continue;
+    }
+
+    const isFavArt = isArtistFollowed(cleanArtist);
+    const isFavSong = isTrackFollowed(hit.id) || isTrackFollowed(cleanTitle);
+    const affinity = anchorTrack ? scoreTrackAffinity(anchorTrack, { ...hit, title: cleanTitle, artist: cleanArtist }, false) : { score: 70, reason: '' };
+
+    if (isFavArt || isFavSong) {
+      seenKeys.add(sKey);
+      favCandidates.push({
+        track: { ...hit, title: cleanTitle, artist: cleanArtist },
+        reason: isFavArt ? `❤️ Beğendiğin Sanatçı (${cleanArtist})` : `❤️ Beğendiğin Şarkı`,
+        score: Math.max(affinity.score, 95)
+      });
+    } else if (affinity.score > 40) {
+      seenKeys.add(sKey);
+      discoveryCandidates.push({
+        track: { ...hit, title: cleanTitle, artist: cleanArtist },
+        reason: `✨ Keşif & Değişiklik Önerisi (${cleanArtist})`,
+        score: affinity.score
+      });
+    }
+  }
+
+  // Reshuffle pools with entropy
+  const shuffle = (arr: any[]) => [...arr].sort(() => Math.random() - 0.5);
+  const shuffledFavs = shuffle(favCandidates);
+  const shuffledDisc = shuffle(discoveryCandidates);
+
+  const combined: Track[] = [];
+  let fI = 0;
+  let dI = 0;
+
+  while (combined.length < count && (fI < shuffledFavs.length || dI < shuffledDisc.length)) {
+    // 2-3 from favorites
+    if (fI < shuffledFavs.length) {
+      const c = shuffledFavs[fI++];
+      combined.push({
+        ...c.track,
+        isSmartRecommendation: true,
+        recommendationReason: c.reason,
+        matchScore: c.score
+      });
+    }
+    if (fI < shuffledFavs.length && Math.random() > 0.3) {
+      const c = shuffledFavs[fI++];
+      combined.push({
+        ...c.track,
+        isSmartRecommendation: true,
+        recommendationReason: c.reason,
+        matchScore: c.score
+      });
+    }
+    // 1 discovery track for variety
+    if (dI < shuffledDisc.length) {
+      const c = shuffledDisc[dI++];
+      combined.push({
+        ...c.track,
+        isSmartRecommendation: true,
+        recommendationReason: c.reason,
+        matchScore: c.score
+      });
+    }
+  }
+
+  const diversified = applyArtistDiversityFilter(combined, sortedArtists[0] || '', 2, 3);
+  return {
+    title: `📻 ${playlist.name} Radyosu`,
+    themeName: dominantTheme,
+    badge: 'Özel Radyo',
+    tracks: diversified.slice(0, count)
   };
 }
 

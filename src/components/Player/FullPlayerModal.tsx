@@ -26,7 +26,8 @@ import {
   Flame,
   Tv,
   ArrowLeft,
-  X
+  X,
+  RefreshCw
 } from 'lucide-react';
 import { Track, RepeatMode, ShuffleMode } from '../../types';
 import { AudioVisualizer } from './AudioVisualizer';
@@ -54,6 +55,7 @@ interface FullPlayerModalProps {
   isRadioActive?: boolean;
   radioSeedTrack?: Track | null;
   onExitRadio?: () => void;
+  onRefreshRadio?: () => void;
   onTogglePlay: () => void;
   onPrev: () => void;
   onNext: () => void;
@@ -80,6 +82,7 @@ export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
   isRadioActive = false,
   radioSeedTrack,
   onExitRadio,
+  onRefreshRadio,
   onTogglePlay,
   onPrev,
   onNext,
@@ -389,9 +392,19 @@ export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
                     </span>
                   )}
                   {isRadioActive ? (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm">
+                    <span className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm">
                       <Radio className="w-3 h-3 text-amber-400 animate-pulse" />
                       <span>{radioSeedTrack ? `${radioSeedTrack.artist} Radyosu` : 'Şarkı Radyosu'}</span>
+                      {onRefreshRadio && (
+                        <button
+                          onClick={onRefreshRadio}
+                          className="ml-1 px-1.5 py-0.5 rounded bg-amber-500/30 hover:bg-amber-500/50 text-white flex items-center gap-1 cursor-pointer transition"
+                          title="Radyoyu Yepyeni Şarkılarla Yenile"
+                        >
+                          <RefreshCw className="w-2.5 h-2.5" />
+                          <span>Yenile</span>
+                        </button>
+                      )}
                       {onExitRadio && (
                         <button
                           onClick={onExitRadio}
