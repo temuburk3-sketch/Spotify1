@@ -1482,7 +1482,7 @@ Return JSON array with up to 3 best matching real songs:
             }
           }
         } catch (geminiSearchErr) {
-          console.warn("Gemini lyric analysis note:", geminiSearchErr);
+          handleGeminiError(geminiSearchErr, "lyrics search analysis");
         }
       }
     }
@@ -3909,9 +3909,17 @@ async function fetchLyricsWithGeminiSearch(
 
   const durationSec = Math.max(30, Math.round(songDuration));
 
-  // Method 1: Gemini 3.8 Flash with Google Search Grounding to find real lyrics on the live web
-  try {
-    const searchPrompt = `Search the web for the official, authentic lyrics of the song "${cleanTitle}" by "${cleanArtist}".
+  // Method 1: Google Search Grounding to find real lyrics on the live web
+  if (!googleSearchQuotaDisabled) {
+    const searchModel = isGeminiAvailable("gemini-flash-latest")
+      ? "gemini-flash-latest"
+      : isGeminiAvailable("gemini-3.8-flash")
+      ? "gemini-3.8-flash"
+      : null;
+
+    if (searchModel) {
+      try {
+        const searchPrompt = `Search the web for the official, authentic lyrics of the song "${cleanTitle}" by "${cleanArtist}".
 Find the exact real lyrics from lyric archives and databases (e.g. Genius, SarkiSozleri, Musixmatch, AzLyrics, LyricsTranslate).
 Then produce a synchronized version with timestamps distributed naturally across the song duration (~${durationSec} seconds), beginning with the vocal entry (~6-12s) until the outro.
 
@@ -3926,46 +3934,48 @@ Output your response STRICTLY as a raw JSON object with NO preamble and NO comme
   "foundOnline": true
 }`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
-      contents: searchPrompt,
-      config: {
-        tools: [{ googleSearch: {} }],
-      }
-    });
+        const response = await ai.models.generateContent({
+          model: searchModel,
+          contents: searchPrompt,
+          config: {
+            tools: [{ googleSearch: {} }],
+          }
+        });
 
-    if (response && response.text) {
-      let rawText = response.text.trim();
-      // Remove markdown code fences if present
-      if (rawText.startsWith("```")) {
-        rawText = rawText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-      }
+        if (response && response.text) {
+          let rawText = response.text.trim();
+          // Remove markdown code fences if present
+          if (rawText.startsWith("```")) {
+            rawText = rawText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+          }
 
-      const parsed = JSON.parse(rawText);
-      if (parsed && Array.isArray(parsed.timedLyrics) && parsed.timedLyrics.length > 0) {
-        // Extract web grounding sources if available
-        const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
-        const webSources: string[] = [];
-        if (groundingChunks && Array.isArray(groundingChunks)) {
-          for (const chunk of groundingChunks) {
-            if (chunk.web?.title) webSources.push(chunk.web.title);
+          const parsed = JSON.parse(rawText);
+          if (parsed && Array.isArray(parsed.timedLyrics) && parsed.timedLyrics.length > 0) {
+            // Extract web grounding sources if available
+            const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+            const webSources: string[] = [];
+            if (groundingChunks && Array.isArray(groundingChunks)) {
+              for (const chunk of groundingChunks) {
+                if (chunk.web?.title) webSources.push(chunk.web.title);
+              }
+            }
+
+            return {
+              synced: true,
+              timedLyrics: parsed.timedLyrics.sort((a: any, b: any) => Number(a.time) - Number(b.time)),
+              plainLyrics: parsed.plainLyrics || parsed.timedLyrics.map((t: any) => t.text).join("\n"),
+              source: "gemini_search_grounded",
+              webSources: webSources.slice(0, 3)
+            };
           }
         }
-
-        return {
-          synced: true,
-          timedLyrics: parsed.timedLyrics.sort((a: any, b: any) => Number(a.time) - Number(b.time)),
-          plainLyrics: parsed.plainLyrics || parsed.timedLyrics.map((t: any) => t.text).join("\n"),
-          source: "gemini_search_grounded",
-          webSources: webSources.slice(0, 3)
-        };
+      } catch (searchErr: any) {
+        handleGeminiError(searchErr, "Gemini Search Grounding Lyrics", searchModel);
       }
     }
-  } catch (searchErr: any) {
-    handleGeminiError(searchErr, "Gemini Search Grounding Lyrics");
   }
 
-  // If quota was exhausted during Method 1 or Gemini is cooling down, exit cleanly without re-triggering 429
+  // If quota was exhausted during Method 1 or Gemini is cooling down, exit cleanly without re-triggering errors
   if (!isGeminiAvailable()) return null;
 
   // Method 2: Schema-enforced Gemini generation with cascade models
@@ -4006,7 +4016,7 @@ Respond in valid JSON matching schema.`;
     const aiLyrics = await generateJsonWithGemini<{ timedLyrics: { time: number; text: string }[]; plainLyrics: string }>(
       prompt,
       lyricsSchema,
-      ["gemini-3.8-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"]
+      ["gemini-3.1-flash-lite", "gemini-flash-latest", "gemini-3.8-flash"]
     );
 
     if (aiLyrics && Array.isArray(aiLyrics.timedLyrics) && aiLyrics.timedLyrics.length > 0) {
@@ -4486,7 +4496,7 @@ app.get("/api/lyrics", async (req, res) => {
       return res.json(result);
     }
   } catch (geminiErr) {
-    console.warn("Gemini automatic lyrics synthesis notice:", geminiErr);
+    handleGeminiError(geminiErr, "automatic lyrics synthesis");
   }
 
   // 4. Clean Rhythmic Fallback
