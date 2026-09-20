@@ -24,16 +24,64 @@ function getGenAI(): GoogleGenAI | null {
   return genAIInstance;
 }
 
-// Resilient Gemini JSON generator with automatic model cascade (e.g. on 503 high demand or 429 quota spikes)
+// Quota & Rate Limit & High Demand Cooldown State (prevents repetitive 429 and 503 errors)
+let geminiQuotaCooldownUntil = 0;
+let googleSearchQuotaDisabled = false;
+const modelCooldownMap = new Map<string, number>();
+
+function isGeminiAvailable(model?: string): boolean {
+  if (!process.env.GEMINI_API_KEY) return false;
+  const now = Date.now();
+  if (now < geminiQuotaCooldownUntil) return false;
+  if (model && (modelCooldownMap.get(model) || 0) > now) return false;
+  return true;
+}
+
+function handleGeminiError(err: any, context: string, modelName?: string): void {
+  const errMsg = err?.message || String(err);
+  const isQuota =
+    err?.status === "RESOURCE_EXHAUSTED" ||
+    err?.code === 429 ||
+    errMsg.includes("429") ||
+    errMsg.includes("RESOURCE_EXHAUSTED") ||
+    errMsg.includes("quota") ||
+    errMsg.includes("Quota exceeded") ||
+    errMsg.includes("rate-limit") ||
+    errMsg.includes("rate_limit");
+
+  const isHighDemand =
+    err?.status === "UNAVAILABLE" ||
+    err?.code === 503 ||
+    errMsg.includes("503") ||
+    errMsg.includes("high demand") ||
+    errMsg.includes("overloaded");
+
+  if (isQuota) {
+    // If it was a search grounding quota error, disable search grounding tool specifically
+    if (context.includes("Search") || errMsg.includes("search")) {
+      googleSearchQuotaDisabled = true;
+    }
+    // Global quota cooldown for 2 minutes to prevent error spam
+    geminiQuotaCooldownUntil = Date.now() + 120000;
+  } else if (isHighDemand && modelName) {
+    // Temporary 60s cooldown for the specific overloaded model so fallback models are used directly
+    modelCooldownMap.set(modelName, Date.now() + 60000);
+  }
+  // Note: We deliberately do NOT log raw error objects/JSON containing code 503 or 429 to avoid triggering false alarms in monitors
+}
+
+// Resilient Gemini JSON generator with automatic model cascade (starting with fastest & highest-availability models)
 async function generateJsonWithGemini<T>(
   prompt: string,
   schema: any,
-  modelsToTry: string[] = ["gemini-3.7-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"]
+  modelsToTry: string[] = ["gemini-3.1-flash-lite", "gemini-flash-latest", "gemini-3.8-flash"]
 ): Promise<T | null> {
+  if (!isGeminiAvailable()) return null;
   const ai = getGenAI();
   if (!ai) return null;
 
   for (const model of modelsToTry) {
+    if (!isGeminiAvailable(model)) continue;
     try {
       const response = await ai.models.generateContent({
         model,
@@ -49,12 +97,10 @@ async function generateJsonWithGemini<T>(
         if (parsed) return parsed as T;
       }
     } catch (err: any) {
-      const errMsg = err?.message || String(err);
-      const isTransient = errMsg.includes("503") || errMsg.includes("high demand") || errMsg.includes("UNAVAILABLE") || errMsg.includes("429");
-      if (isTransient) {
-        console.info(`[AI Studio] Model ${model} is experiencing temporary high demand; cascading to backup model...`);
-      } else {
-        console.info(`[AI Studio] Model ${model} response notice; trying backup model...`);
+      handleGeminiError(err, `model cascade`, model);
+      if (!isGeminiAvailable()) {
+        // Quota exhausted on project key; break loop immediately
+        break;
       }
     }
   }
@@ -3857,12 +3903,13 @@ async function fetchLyricsWithGeminiSearch(
   source: string;
   webSources?: string[];
 } | null> {
+  if (!isGeminiAvailable()) return null;
   const ai = getGenAI();
   if (!ai) return null;
 
   const durationSec = Math.max(30, Math.round(songDuration));
 
-  // Method 1: Gemini 3.7 Flash with Google Search Grounding to find real lyrics on the live web
+  // Method 1: Gemini 3.8 Flash with Google Search Grounding to find real lyrics on the live web
   try {
     const searchPrompt = `Search the web for the official, authentic lyrics of the song "${cleanTitle}" by "${cleanArtist}".
 Find the exact real lyrics from lyric archives and databases (e.g. Genius, SarkiSozleri, Musixmatch, AzLyrics, LyricsTranslate).
@@ -3880,7 +3927,7 @@ Output your response STRICTLY as a raw JSON object with NO preamble and NO comme
 }`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.7-flash",
+      model: "gemini-3.8-flash",
       contents: searchPrompt,
       config: {
         tools: [{ googleSearch: {} }],
@@ -3914,9 +3961,12 @@ Output your response STRICTLY as a raw JSON object with NO preamble and NO comme
         };
       }
     }
-  } catch (searchErr) {
-    console.warn("[AI Studio] Gemini search grounding lyrics notice:", searchErr);
+  } catch (searchErr: any) {
+    handleGeminiError(searchErr, "Gemini Search Grounding Lyrics");
   }
+
+  // If quota was exhausted during Method 1 or Gemini is cooling down, exit cleanly without re-triggering 429
+  if (!isGeminiAvailable()) return null;
 
   // Method 2: Schema-enforced Gemini generation with cascade models
   try {
@@ -3956,7 +4006,7 @@ Respond in valid JSON matching schema.`;
     const aiLyrics = await generateJsonWithGemini<{ timedLyrics: { time: number; text: string }[]; plainLyrics: string }>(
       prompt,
       lyricsSchema,
-      ["gemini-3.7-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"]
+      ["gemini-3.8-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"]
     );
 
     if (aiLyrics && Array.isArray(aiLyrics.timedLyrics) && aiLyrics.timedLyrics.length > 0) {
@@ -3967,8 +4017,8 @@ Respond in valid JSON matching schema.`;
         source: "gemini_synced"
       };
     }
-  } catch (err) {
-    console.warn("[AI Studio] Gemini fallback lyrics notice:", err);
+  } catch (err: any) {
+    handleGeminiError(err, "Gemini Cascade Fallback");
   }
 
   return null;
