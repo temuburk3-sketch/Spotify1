@@ -217,6 +217,39 @@ const VERIFIED_OFFLINE_LYRICS: Record<string, { timedLyrics: { time: number; tex
       { time: 45, text: "I'm a motherfuckin' starboy" }
     ],
     plainLyrics: `I'm tryna put you in the worst mood, ah\nP1 cleaner than your church shoes, ah\nMilli point two just to hurt you, ah\nAll red Lamb' just to tease you, ah\nLook what you've done\nI'm a motherfuckin' starboy`
+  },
+  'okulyolunda': {
+    timedLyrics: [
+      { time: 0, text: '🎹 (Nostaljik Piyano & Keman İntrosu)' },
+      { time: 14, text: 'Okul yolunda bir güzel gördüm' },
+      { time: 24, text: 'Saçları sırma, gözleri zeytin' },
+      { time: 35, text: 'Aklımı başımdan aldı bir anda' },
+      { time: 46, text: 'Beni benden etti o tatlı bakış' },
+      { time: 58, text: 'Her sabah beklerim onun yolunu' },
+      { time: 69, text: 'Uzat bana sevgilim narin kolunu' },
+      { time: 80, text: 'Sensiz yaşayamam bu dünyada ben' },
+      { time: 92, text: 'Beni sensiz koyma okul yolunda' },
+      { time: 105, text: '🎹 (Piyano Solosu)' },
+      { time: 125, text: 'Kitabı elinde, defteri kolda' },
+      { time: 136, text: 'Yürürdü aheste o güzel yolda' },
+      { time: 148, text: 'Bir selam verişi dünyalara değer' },
+      { time: 160, text: 'Aşk denen o duygu ne güzelmiş meğer' },
+      { time: 172, text: 'Her sabah beklerim onun yolunu' },
+      { time: 184, text: 'Uzat bana sevgilim narin kolunu' }
+    ],
+    plainLyrics: `Okul yolunda bir güzel gördüm\nSaçları sırma, gözleri zeytin\nAklımı başımdan aldı bir anda\nBeni benden etti o tatlı bakış\n\nHer sabah beklerim onun yolunu\nUzat bana sevgilim narin kolunu\nSensiz yaşayamam bu dünyada ben\nBeni sensiz koyma okul yolunda\n\nKitabı elinde, defteri kolda\nYürürdü aheste o güzel yolda\nBir selam verişi dünyalara değer\nAşk denen o duygu ne güzelmiş meğer`
+  },
+  'nikahmasasi': {
+    timedLyrics: [
+      { time: 0, text: '🎹 (Duygusal Piyano İntrosu)' },
+      { time: 15, text: 'Nikah masasına oturdun işte' },
+      { time: 27, text: 'Dayanmak çok zormuş böyle bir derde' },
+      { time: 40, text: 'Sana mutluluklar, bana elem var' },
+      { time: 52, text: 'İçimde dinmeyen büyük bir acı' },
+      { time: 65, text: 'Bitti artık her şey, bitti sevgilim' },
+      { time: 78, text: 'Nikah masasında bitti ümidim' }
+    ],
+    plainLyrics: `Nikah masasına oturdun işte\nDayanmak çok zormuş böyle bir derde\nSana mutluluklar, bana elem var\nİçimde dinmeyen büyük bir acı\n\nBitti artık her şey, bitti sevgilim\nNikah masasında bitti ümidim`
   }
 };
 

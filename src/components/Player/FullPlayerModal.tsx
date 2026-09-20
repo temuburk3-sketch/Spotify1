@@ -295,8 +295,13 @@ export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
             <div className="flex flex-col items-center max-w-xs sm:max-w-sm w-full shrink-0">
               <div className="relative w-48 h-48 sm:w-56 sm:h-56 md:w-72 md:h-72 rounded-2xl overflow-hidden shadow-2xl border border-white/10 group bg-neutral-950">
                 <img
-                  src={track.coverUrl}
+                  src={track.coverUrl || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600'}
                   alt={track.title}
+                  referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    e.currentTarget.onerror = null;
+                    e.currentTarget.src = 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600';
+                  }}
                   className="w-full h-full object-cover transition duration-700 group-hover:scale-105"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent flex flex-col justify-end p-4">
@@ -474,47 +479,60 @@ export const FullPlayerModal: React.FC<FullPlayerModalProps> = ({
               </div>
 
               {/* Timed Lyrics Lines with center padding and dynamic focus */}
-              <div className="py-[32vh] space-y-4 sm:space-y-5">
-                {timedLyrics.map((line, idx) => {
-                  const isActive = idx === currentLyricIndex;
-                  const distance = Math.abs(idx - currentLyricIndex);
+              {timedLyrics.length > 0 ? (
+                <div className="py-[32vh] space-y-4 sm:space-y-5">
+                  {timedLyrics.map((line, idx) => {
+                    const isActive = idx === currentLyricIndex;
+                    const distance = Math.abs(idx - currentLyricIndex);
 
-                  let opacityClass = 'opacity-85 text-neutral-300';
-                  let scaleClass = 'scale-95';
+                    let opacityClass = 'opacity-85 text-neutral-300';
+                    let scaleClass = 'scale-95';
 
-                  if (isActive) {
-                    opacityClass = 'opacity-100 text-white';
-                    scaleClass = 'scale-105 sm:scale-108';
-                  } else if (distance === 1) {
-                    opacityClass = 'opacity-65 text-neutral-400';
-                    scaleClass = 'scale-98';
-                  } else if (distance === 2) {
-                    opacityClass = 'opacity-40 text-neutral-500';
-                    scaleClass = 'scale-95';
-                  } else {
-                    opacityClass = 'opacity-20 text-neutral-600';
-                    scaleClass = 'scale-90';
-                  }
+                    if (isActive) {
+                      opacityClass = 'opacity-100 text-white';
+                      scaleClass = 'scale-105 sm:scale-108';
+                    } else if (distance === 1) {
+                      opacityClass = 'opacity-65 text-neutral-400';
+                      scaleClass = 'scale-98';
+                    } else if (distance === 2) {
+                      opacityClass = 'opacity-40 text-neutral-500';
+                      scaleClass = 'scale-95';
+                    } else {
+                      opacityClass = 'opacity-20 text-neutral-600';
+                      scaleClass = 'scale-90';
+                    }
 
-                  return (
-                    <div
-                      key={idx}
-                      data-lyric-idx={idx}
-                      onClick={() => onSeek(line.time)}
-                      className={`group flex items-start gap-3 cursor-pointer transition-all duration-500 ease-out rounded-2xl p-3 sm:p-4 origin-left ${scaleClass} ${
-                        isActive
-                          ? 'font-black text-lg sm:text-xl md:text-2xl bg-gradient-to-r from-emerald-500/20 via-white/10 to-transparent pl-5 sm:pl-6 border-l-4 border-emerald-400 shadow-2xl shadow-emerald-500/20'
-                          : 'font-medium text-xs sm:text-sm md:text-base hover:opacity-90 hover:text-neutral-200'
-                      } ${opacityClass}`}
-                    >
-                      <span className="text-[10px] font-mono text-neutral-500 opacity-0 group-hover:opacity-100 transition mt-1 shrink-0">
-                        {formatTime(line.time)}
-                      </span>
-                      <span className="flex-1 leading-relaxed">{line.text}</span>
-                    </div>
-                  );
-                })}
-              </div>
+                    return (
+                      <div
+                        key={idx}
+                        data-lyric-idx={idx}
+                        onClick={() => onSeek(line.time)}
+                        className={`group flex items-start gap-3 cursor-pointer transition-all duration-500 ease-out rounded-2xl p-3 sm:p-4 origin-left ${scaleClass} ${
+                          isActive
+                            ? 'font-black text-lg sm:text-xl md:text-2xl bg-gradient-to-r from-emerald-500/20 via-white/10 to-transparent pl-5 sm:pl-6 border-l-4 border-emerald-400 shadow-2xl shadow-emerald-500/20'
+                            : 'font-medium text-xs sm:text-sm md:text-base hover:opacity-90 hover:text-neutral-200'
+                        } ${opacityClass}`}
+                      >
+                        <span className="text-[10px] font-mono text-neutral-500 opacity-0 group-hover:opacity-100 transition mt-1 shrink-0">
+                          {formatTime(line.time)}
+                        </span>
+                        <span className="flex-1 leading-relaxed">{line.text}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
+                  <Disc3 className="w-12 h-12 text-emerald-500/40 animate-spin mb-3" />
+                  <p className="text-sm font-bold text-neutral-200">{track.title}</p>
+                  <p className="text-xs text-emerald-400/80 mt-1">{track.artist}</p>
+                  <p className="text-xs text-neutral-400 mt-4 max-w-sm">
+                    {isLoadingLyrics
+                      ? 'Canlı sözler ve zaman damgaları taranıyor...'
+                      : 'Bu parça için senkronize metin hazırlanıyor. Melodinin ve sesin keyfini çıkarın.'}
+                  </p>
+                </div>
+              )}
 
               {/* Resume auto follow pill if user scrolled away */}
               {!autoFollow && (

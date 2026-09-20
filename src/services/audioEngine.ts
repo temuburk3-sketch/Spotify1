@@ -1,5 +1,6 @@
 import { AudioSettings, Track } from '../types';
 import { getAudioBlobFromCache } from './storage';
+import { resolveClientTrackSource } from './clientYoutubeResolver';
 
 const STORAGE_CACHE_KEY = 'soundpulse_yt_cache_v2';
 
@@ -42,10 +43,9 @@ export function prefetchTrackYouTubeId(track: Track): void {
     return;
   }
 
-  fetch(`/api/audio/full-source?title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(track.artist)}`)
-    .then(r => r.json())
+  resolveClientTrackSource(track.title, track.artist)
     .then(data => {
-      if (data.youtubeId) {
+      if (data && data.youtubeId) {
         track.youtubeId = data.youtubeId;
         track.candidateIds = data.candidateIds && data.candidateIds.length > 0 ? data.candidateIds : [data.youtubeId];
         track.currentCandidateIndex = 0;
@@ -898,26 +898,26 @@ class AudioEngine {
       return this.playViaYouTube(targetYtId, effectiveStart);
     }
 
-    // 4. If youtubeId is not yet resolved, resolve full song from API
+    // 4. If youtubeId is not yet resolved, resolve full song via robust hybrid resolver
     try {
       this.isUserPaused = false;
       // Keep silent keep-alive active during network fetch so mobile OS doesn't kill the background thread
       this.silentAudio?.play().catch(() => {});
-      const res = await fetch(`/api/audio/full-source?title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(track.artist)}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.youtubeId && this.currentTrack?.id === track.id) {
-          track.youtubeId = data.youtubeId;
-          track.candidateIds = data.candidateIds && data.candidateIds.length > 0 ? data.candidateIds : [data.youtubeId];
-          track.currentCandidateIndex = 0;
-          if (data.duration && data.duration > 0) {
-            track.duration = data.duration;
-          }
-          fullTrackIdCache.set(cacheKey, { youtubeId: data.youtubeId, duration: data.duration, candidateIds: track.candidateIds });
-          saveCachedTrackIds();
-          this.audio.pause();
-          return this.playViaYouTube(data.youtubeId, effectiveStart);
+      
+      const resolved = await resolveClientTrackSource(track.title, track.artist);
+      if (resolved && resolved.youtubeId && this.currentTrack?.id === track.id) {
+        track.youtubeId = resolved.youtubeId;
+        track.candidateIds = resolved.candidateIds && resolved.candidateIds.length > 0 ? resolved.candidateIds : [resolved.youtubeId];
+        track.currentCandidateIndex = 0;
+        if (resolved.duration && resolved.duration > 0) {
+          track.duration = resolved.duration;
         }
+        fullTrackIdCache.set(cacheKey, { youtubeId: resolved.youtubeId, duration: resolved.duration, candidateIds: track.candidateIds });
+        saveCachedTrackIds();
+        this.audio.pause();
+        return this.playViaYouTube(resolved.youtubeId, effectiveStart);
+      } else if (resolved && resolved.duration && !track.duration) {
+        track.duration = resolved.duration;
       }
     } catch (e) {
       console.warn('Full track resolve notice:', e);
@@ -928,19 +928,16 @@ class AudioEngine {
       try {
         const cleanT = track.title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').replace(/feat\..*$/i, '').trim();
         if (cleanT !== track.title) {
-          const res2 = await fetch(`/api/audio/full-source?title=${encodeURIComponent(cleanT)}&artist=${encodeURIComponent(track.artist)}`);
-          if (res2.ok) {
-            const data2 = await res2.json();
-            if (data2.youtubeId && this.currentTrack?.id === track.id) {
-              track.youtubeId = data2.youtubeId;
-              track.candidateIds = data2.candidateIds || [data2.youtubeId];
-              track.currentCandidateIndex = 0;
-              if (data2.duration && data2.duration > 0) track.duration = data2.duration;
-              fullTrackIdCache.set(cacheKey, { youtubeId: data2.youtubeId, duration: data2.duration, candidateIds: track.candidateIds });
-              saveCachedTrackIds();
-              this.audio.pause();
-              return this.playViaYouTube(data2.youtubeId, effectiveStart);
-            }
+          const resolvedClean = await resolveClientTrackSource(cleanT, track.artist);
+          if (resolvedClean && resolvedClean.youtubeId && this.currentTrack?.id === track.id) {
+            track.youtubeId = resolvedClean.youtubeId;
+            track.candidateIds = resolvedClean.candidateIds || [resolvedClean.youtubeId];
+            track.currentCandidateIndex = 0;
+            if (resolvedClean.duration && resolvedClean.duration > 0) track.duration = resolvedClean.duration;
+            fullTrackIdCache.set(cacheKey, { youtubeId: resolvedClean.youtubeId, duration: resolvedClean.duration, candidateIds: track.candidateIds });
+            saveCachedTrackIds();
+            this.audio.pause();
+            return this.playViaYouTube(resolvedClean.youtubeId, effectiveStart);
           }
         }
       } catch {}
@@ -977,6 +974,8 @@ class AudioEngine {
     }
   }
 
+  private ytStallCheckTimer: any = null;
+
   private async playViaYouTube(youtubeId: string, startTime = 0): Promise<void> {
     this.activeMode = 'youtube';
     this.isUserPaused = false;
@@ -994,6 +993,7 @@ class AudioEngine {
         });
         this.applyInternalVolume(this.currentEffectiveVolume);
         this.setPlaybackRate(this.currentPlaybackRate);
+        try { this.ytPlayer.unMute(); } catch {}
         this.ytPlayer.playVideo();
         if (typeof this.ytPlayer.setPlaybackQuality === 'function') {
           try { this.ytPlayer.setPlaybackQuality(this.batterySaverMode ? 'small' : 'medium'); } catch {}
@@ -1006,6 +1006,23 @@ class AudioEngine {
         if (this.onPlayStateChangeCallback) {
           this.onPlayStateChangeCallback(true);
         }
+
+        // Mobile stall watchdog: Verify playback started
+        if (this.ytStallCheckTimer) clearTimeout(this.ytStallCheckTimer);
+        this.ytStallCheckTimer = setTimeout(() => {
+          if (!this.isUserPaused && this.activeMode === 'youtube' && this.ytPlayer) {
+            const state = typeof this.ytPlayer.getPlayerState === 'function' ? this.ytPlayer.getPlayerState() : -1;
+            const cur = (typeof this.ytPlayer.getCurrentTime === 'function' ? this.ytPlayer.getCurrentTime() : 0) || 0;
+            if (cur === 0 && (state === -1 || state === 2 || state === 3)) {
+              console.warn('Mobile playback kickstart triggered...');
+              try {
+                this.ytPlayer.unMute();
+                this.ytPlayer.playVideo();
+              } catch {}
+            }
+          }
+        }, 2200);
+
         return;
       } catch (e) {
         console.warn('Failed to load YT video:', e);
@@ -1028,10 +1045,9 @@ class AudioEngine {
     // If playing HTML5 preview and full YouTube stream wasn't resolved yet, resolve in background for seamless transition
     if (track.source !== 'local' && !track.youtubeId) {
       const cacheKey = `${track.title.toLowerCase().trim()}___${(track.artist || '').toLowerCase().trim()}`;
-      fetch(`/api/audio/full-source?title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(track.artist)}`)
-        .then(r => r.json())
+      resolveClientTrackSource(track.title, track.artist)
         .then(data => {
-          if (data.youtubeId && this.currentTrack?.id === track.id) {
+          if (data && data.youtubeId && this.currentTrack?.id === track.id) {
             track.youtubeId = data.youtubeId;
             track.candidateIds = data.candidateIds && data.candidateIds.length > 0 ? data.candidateIds : [data.youtubeId];
             track.currentCandidateIndex = 0;

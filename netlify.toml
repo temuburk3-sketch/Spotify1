@@ -6,6 +6,24 @@
   NODE_VERSION = "20"
   NPM_FLAGS = "--include=dev"
 
+[functions]
+  directory = "netlify/functions"
+
+[[redirects]]
+  from = "/api/audio/full-source"
+  to = "/.netlify/functions/full-source"
+  status = 200
+
+[[redirects]]
+  from = "/api/lyrics"
+  to = "/.netlify/functions/lyrics"
+  status = 200
+
+[[redirects]]
+  from = "/api/gemini/lyrics"
+  to = "/.netlify/functions/lyrics"
+  status = 200
+
 [[redirects]]
   from = "/*"
   to = "/index.html"

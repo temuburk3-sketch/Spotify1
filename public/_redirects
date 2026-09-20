@@ -1,3 +1,10 @@
-# Netlify SPA Redirects Rule
-# Directs all routes to index.html with HTTP 200 status for React client-side routing
-/*    /index.html   200
+# Netlify Redirects Configuration
+# Functions routing FIRST
+/api/audio/full-source    /.netlify/functions/full-source   200
+/api/audio/full-stream    /.netlify/functions/full-source   200
+/api/lyrics               /.netlify/functions/lyrics        200
+/api/gemini/lyrics        /.netlify/functions/lyrics        200
+/api/*                    /.netlify/functions/:splat        200
+
+# SPA Catch-all: Directs all other client routes to index.html with HTTP 200
+/*                        /index.html                       200

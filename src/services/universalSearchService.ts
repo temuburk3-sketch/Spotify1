@@ -248,11 +248,12 @@ export async function searchUniversalTracks(query: string, category = 'all'): Pr
     }
   }
 
-  // 2. Try server-side API endpoint if available (Local dev / Cloud Run)
+  // 2. Try server-side API endpoint if available (Local dev / Cloud Run / Netlify Functions)
   try {
     const serverType = category === 'lyrics' ? 'lyrics' : category === 'artists' ? 'artist' : 'all';
     const sRes = await fetchWithTimeout(`/api/audio/search?q=${encodeURIComponent(cleanQuery)}&type=${serverType}`, {}, 1800);
-    if (sRes.ok) {
+    const cType = sRes.headers.get('content-type') || '';
+    if (sRes.ok && cType.includes('application/json')) {
       const sData = await sRes.json();
       if (sData.results && Array.isArray(sData.results)) {
         for (const t of sData.results) {
