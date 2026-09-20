@@ -30,30 +30,112 @@
         height: 100%;
         background-color: #0a0d11;
       }
+      #sp-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 999999;
+        background-color: #0a0d11;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        transition: opacity 0.25s ease-out;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
       @keyframes sp-pulse {
         0%, 100% { opacity: 0.4; transform: scale(0.96); }
         50% { opacity: 1; transform: scale(1); }
       }
     </style>
+    <script>
+      // 1. Instant Cache Invalidation & Stale Service Worker Buster
+      (function() {
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.getRegistrations().then(function(regs) {
+            for (var i = 0; i < regs.length; i++) {
+              regs[i].unregister().catch(function() {});
+            }
+          }).catch(function() {});
+        }
+        if ('caches' in window) {
+          caches.keys().then(function(keys) {
+            for (var i = 0; i < keys.length; i++) {
+              caches.delete(keys[i]).catch(function() {});
+            }
+          }).catch(function() {});
+        }
+
+        // 2. Global Error Handler for dynamic chunk loading failures
+        window.addEventListener('error', function(e) {
+          var msg = (e && e.message) ? String(e.message) : '';
+          var src = (e && e.filename) ? String(e.filename) : '';
+          if (msg.indexOf('Failed to fetch') !== -1 || msg.indexOf('dynamically imported module') !== -1 || msg.indexOf('MIME') !== -1 || src.indexOf('/assets/') !== -1) {
+            console.warn('Script chunk load error detected. Attempting instant recovery...');
+            if (!sessionStorage.getItem('sp_recovered')) {
+              sessionStorage.setItem('sp_recovered', '1');
+              window.location.reload();
+            }
+          }
+        }, true);
+
+        // 3. Emergency manual launch action
+        window.spEmergencyBoot = function() {
+          try {
+            if ('serviceWorker' in navigator) {
+              navigator.serviceWorker.getRegistrations().then(function(regs) {
+                for (var i = 0; i < regs.length; i++) regs[i].unregister();
+              });
+            }
+            if ('caches' in window) {
+              caches.keys().then(function(keys) {
+                for (var i = 0; i < keys.length; i++) caches.delete(keys[i]);
+              });
+            }
+            localStorage.clear();
+            sessionStorage.clear();
+          } catch(e) {}
+          window.location.href = window.location.origin + window.location.pathname + '?r=' + Date.now();
+        };
+
+        // 4. Watchdog: If React hasn't mounted in 2.2s, display emergency start button
+        setTimeout(function() {
+          if (!window.__soundpulse_mounted) {
+            var btn = document.getElementById('sp-retry-btn');
+            if (btn) btn.style.display = 'inline-block';
+            var sub = document.getElementById('sp-subtext');
+            if (sub) sub.innerHTML = 'Açılış hazırlanıyor. Doğrudan başlatmak için:';
+          }
+        }, 2200);
+
+        // 5. Watchdog auto-heal: If still stuck after 5.5s, auto-trigger emergency boot once
+        setTimeout(function() {
+          if (!window.__soundpulse_mounted && !sessionStorage.getItem('sp_auto_healed')) {
+            sessionStorage.setItem('sp_auto_healed', '1');
+            window.spEmergencyBoot();
+          }
+        }, 5500);
+      })();
+    </script>
   </head>
   <body style="background-color: #0a0d11; color: #f5f5f5;" class="bg-[#0a0d11] text-neutral-100 antialiased overflow-hidden">
-    <div id="root">
-      <!-- Fallback / Pre-hydration Dark Splash to prevent white screen -->
-      <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; width: 100vw; background-color: #0a0d11; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-        <div style="width: 56px; height: 56px; border-radius: 20px; background: linear-gradient(135deg, #1ed760, #169c46); display: flex; align-items: center; justify-content: center; box-shadow: 0 10px 30px rgba(30, 215, 96, 0.25); animation: sp-pulse 1.8s ease-in-out infinite;">
-          <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M9 18V5l12-2v13"></path>
-            <circle cx="6" cy="18" r="3"></circle>
-            <circle cx="18" cy="16" r="3"></circle>
-          </svg>
-        </div>
-        <p style="margin-top: 18px; color: #e5e5e5; font-size: 15px; font-weight: 700; letter-spacing: -0.2px;">SoundPulse</p>
-        <p style="margin-top: 4px; color: #737373; font-size: 12px; font-weight: 500;">Yükleniyor...</p>
+    <div id="root"></div>
+
+    <div id="sp-splash">
+      <div style="width: 56px; height: 56px; border-radius: 20px; background: linear-gradient(135deg, #1ed760, #169c46); display: flex; align-items: center; justify-content: center; box-shadow: 0 10px 30px rgba(30, 215, 96, 0.25); animation: sp-pulse 1.8s ease-in-out infinite;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 18V5l12-2v13"></path>
+          <circle cx="6" cy="18" r="3"></circle>
+          <circle cx="18" cy="16" r="3"></circle>
+        </svg>
       </div>
+      <p style="margin-top: 18px; color: #e5e5e5; font-size: 15px; font-weight: 700; letter-spacing: -0.2px;">SoundPulse</p>
+      <p id="sp-subtext" style="margin-top: 4px; color: #737373; font-size: 12px; font-weight: 500;">Yükleniyor...</p>
+      <button id="sp-retry-btn" onclick="window.spEmergencyBoot();" style="display: none; margin-top: 16px; background: #1ed760; color: #000; font-size: 13px; font-weight: 700; padding: 10px 22px; border-radius: 9999px; border: none; cursor: pointer; box-shadow: 0 4px 14px rgba(30, 215, 96, 0.35);">
+        Müziği Başlat / Yenile
+      </button>
     </div>
+
     <div id="youtube-player-host" style="position: fixed; bottom: 0; right: 0; width: 120px; height: 120px; opacity: 0.01; pointer-events: none; z-index: -999;"></div>
-    <script async defer src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
-    <script async defer src="https://www.youtube.com/iframe_api"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

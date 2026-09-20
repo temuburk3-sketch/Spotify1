@@ -6,5 +6,9 @@
 /api/gemini/lyrics        /.netlify/functions/lyrics        200
 /api/*                    /.netlify/functions/:splat        200
 
-# SPA Catch-all: Directs all other client routes to index.html with HTTP 200
+# Protect missing assets from being served as index.html (which causes MIME errors)
+/assets/*                 /assets/:splat                    404
+
+# SPA Catch-all: Directs all client page navigation to index.html with HTTP 200
 /*                        /index.html                       200
+

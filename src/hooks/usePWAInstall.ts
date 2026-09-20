@@ -36,9 +36,13 @@ export function usePWAInstall() {
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     window.addEventListener('appinstalled', handleAppInstalled);
 
-    // Register service worker if available
-    if ('serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    // Ensure clean state and unregister any legacy service workers
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then((registrations) => {
+        for (const reg of registrations) {
+          reg.unregister().catch(() => {});
+        }
+      }).catch(() => {});
     }
 
     return () => {

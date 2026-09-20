@@ -208,6 +208,16 @@ export default function App() {
 
   // Detect ?tv=stage param for second screen or smart TV browsers
   useEffect(() => {
+    (window as any).__soundpulse_mounted = true;
+    try {
+      const splash = document.getElementById('sp-splash');
+      if (splash) {
+        splash.style.opacity = '0';
+        splash.style.pointerEvents = 'none';
+        setTimeout(() => splash.remove(), 250);
+      }
+    } catch {}
+
     if (typeof window !== 'undefined') {
       try {
         const params = new URLSearchParams(window.location.search);
