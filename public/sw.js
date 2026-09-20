@@ -47,15 +47,20 @@ self.addEventListener('fetch', (event) => {
   }
 
   event.respondWith(
-    caches.match(request).then((cachedResponse) => {
+    caches.match(request).then(async (cachedResponse) => {
       if (cachedResponse) {
         return cachedResponse;
       }
-      return fetch(request).catch(() => {
-        if (request.headers.get('accept')?.includes('text/html')) {
-          return caches.match('/index.html');
+      try {
+        const networkResponse = await fetch(request);
+        return networkResponse;
+      } catch (err) {
+        if (request.headers.get('accept')?.includes('text/html') || request.mode === 'navigate') {
+          const fallbackHtml = await caches.match('/index.html');
+          if (fallbackHtml) return fallbackHtml;
         }
-      });
+        return new Response('', { status: 408, statusText: 'Network request failed' });
+      }
     })
   );
 });

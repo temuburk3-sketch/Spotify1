@@ -17,26 +17,38 @@ export const DEFAULT_FOLDERS: PlaylistFolder[] = [
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    if (typeof window === 'undefined' || typeof indexedDB === 'undefined') {
+      return reject(new Error('IndexedDB is not supported'));
+    }
+    try {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-    request.onupgradeneeded = (e) => {
-      const db = (e.target as IDBOpenDBRequest).result;
-      if (!db.objectStoreNames.contains(STORE_PLAYLISTS)) {
-        db.createObjectStore(STORE_PLAYLISTS, { keyPath: 'id' });
-      }
-      if (!db.objectStoreNames.contains(STORE_AUDIO_CACHE)) {
-        db.createObjectStore(STORE_AUDIO_CACHE, { keyPath: 'trackId' });
-      }
-      if (!db.objectStoreNames.contains(STORE_SETTINGS)) {
-        db.createObjectStore(STORE_SETTINGS, { keyPath: 'key' });
-      }
-      if (!db.objectStoreNames.contains(STORE_FOLDERS)) {
-        db.createObjectStore(STORE_FOLDERS, { keyPath: 'id' });
-      }
-    };
+      request.onupgradeneeded = (e) => {
+        try {
+          const db = (e.target as IDBOpenDBRequest).result;
+          if (!db.objectStoreNames.contains(STORE_PLAYLISTS)) {
+            db.createObjectStore(STORE_PLAYLISTS, { keyPath: 'id' });
+          }
+          if (!db.objectStoreNames.contains(STORE_AUDIO_CACHE)) {
+            db.createObjectStore(STORE_AUDIO_CACHE, { keyPath: 'trackId' });
+          }
+          if (!db.objectStoreNames.contains(STORE_SETTINGS)) {
+            db.createObjectStore(STORE_SETTINGS, { keyPath: 'key' });
+          }
+          if (!db.objectStoreNames.contains(STORE_FOLDERS)) {
+            db.createObjectStore(STORE_FOLDERS, { keyPath: 'id' });
+          }
+        } catch (upgradeErr) {
+          reject(upgradeErr);
+        }
+      };
 
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+      request.onblocked = () => reject(new Error('IndexedDB blocked'));
+    } catch (openErr) {
+      reject(openErr);
+    }
   });
 }
 
