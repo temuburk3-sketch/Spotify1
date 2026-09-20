@@ -537,8 +537,71 @@ async function resolveYouTubeUrl(url: string) {
   throw new Error("Geçersiz YouTube bağlantısı. Lütfen geçerli bir YouTube video veya çalma listesi bağlantısı girin.");
 }
 
+// Helper to scrape all episodes from a Spotify Show (Podcast / Series)
+async function scrapeSpotifyShow(showId: string) {
+  try {
+    const showUrl = `https://open.spotify.com/show/${showId}`;
+    const res = await fetch(showUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+      }
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+
+    const titleMatch = html.match(/<meta property="og:title" content="([^"]+)"/i) ||
+                       html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
+    const showTitle = titleMatch ? titleMatch[1].replace(' | Podcast on Spotify', '').replace(' | Spotify', '').trim() : 'Podcast Serisi';
+
+    const imgMatch = html.match(/<meta property="og:image" content="([^"]+)"/i);
+    const showCover = imgMatch ? imgMatch[1] : 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600';
+
+    const epMatches = [...html.matchAll(/href="(?:\/intl-[a-z]{2})?\/episode\/([a-zA-Z0-9]+)"[^>]*>[\s\S]*?<h[0-9][^>]*>([^<]+)<\/h[0-9]>/g)];
+    const episodes: any[] = [];
+    const seenIds = new Set<string>();
+
+    for (let i = 0; i < epMatches.length; i++) {
+      const m = epMatches[i];
+      const epId = m[1];
+      const epTitle = m[2].trim();
+      if (!seenIds.has(epId) && epTitle) {
+        seenIds.add(epId);
+        let epArtist = showTitle;
+        if (epTitle.includes(' - ')) {
+          const parts = epTitle.split(' - ');
+          if (parts.length >= 2 && parts[0].trim()) {
+            epArtist = parts[0].trim();
+          }
+        }
+        episodes.push({
+          id: `sp_show_${showId}_${epId}`,
+          title: epTitle,
+          artist: epArtist,
+          album: showTitle,
+          duration: 190,
+          coverUrl: showCover,
+          audioUrl: '',
+          source: 'spotify' as const,
+          spotifyId: epId,
+          addedAt: new Date().toISOString(),
+          genre: 'Şiir & Podcast / Ses Kaydı'
+        });
+      }
+    }
+
+    return {
+      showTitle,
+      showCover,
+      episodes
+    };
+  } catch (err) {
+    console.warn('scrapeSpotifyShow error:', err);
+    return null;
+  }
+}
+
 // Extract Spotify Playlist, Track, Album, Episode, or Show with full tracklist & matching original audio
-async function resolveSpotifyUrl(url: string) {
+async function resolveSpotifyUrl(url: string, options: { expandSeries?: boolean } = { expandSeries: true }) {
   const trimmed = url.trim();
 
   // If user pasted a YouTube link into the import input, route seamlessly to YouTube resolver
@@ -898,6 +961,48 @@ async function resolveSpotifyUrl(url: string) {
     entity.images?.[0]?.url ||
     "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80";
 
+  let parentShowData: any = null;
+  let singleTrackItem: any = null;
+  let seriesEpisodesList: any[] = [];
+
+  // If this is a single episode, check if it belongs to a parent Podcast / Show series
+  if (type === "episode" && entity.relatedEntityUri && entity.relatedEntityUri.includes("spotify:show:")) {
+    const parentShowId = entity.relatedEntityUri.replace("spotify:show:", "").trim();
+    try {
+      const showScrape = await scrapeSpotifyShow(parentShowId);
+      if (showScrape && showScrape.episodes.length > 0) {
+        parentShowData = {
+          id: parentShowId,
+          title: showScrape.showTitle,
+          coverUrl: showScrape.showCover,
+          totalEpisodes: showScrape.episodes.length
+        };
+        seriesEpisodesList = showScrape.episodes;
+      }
+    } catch (err) {
+      console.warn("Parent show extraction error:", err);
+    }
+  }
+
+  // If this is a show link directly, scrape all episodes of the show
+  if (type === "show") {
+    try {
+      const showScrape = await scrapeSpotifyShow(id);
+      if (showScrape && showScrape.episodes.length > 0) {
+        return {
+          type: 'show',
+          id,
+          title: showScrape.showTitle || title,
+          author: showScrape.showTitle || author,
+          coverUrl: showScrape.showCover || coverUrl,
+          tracks: showScrape.episodes
+        };
+      }
+    } catch (err) {
+      console.warn("Direct show scrape error:", err);
+    }
+  }
+
   const rawTracks: any[] = [];
 
   if (type === "track" || type === "episode") {
@@ -955,13 +1060,32 @@ async function resolveSpotifyUrl(url: string) {
     };
   });
 
+  if (type === "episode" && tracks.length > 0) {
+    singleTrackItem = tracks[0];
+  }
+
+  // If we found a parent series with all episodes, combine them seamlessly!
+  let finalTracks = tracks;
+  if (type === "episode" && seriesEpisodesList.length > 0) {
+    // If user wants series expanded (default true), merge so the current episode is present
+    const existingIndex = seriesEpisodesList.findIndex(e => e.spotifyId === id || e.title.toLowerCase() === title.toLowerCase());
+    if (existingIndex === -1 && singleTrackItem) {
+      finalTracks = [singleTrackItem, ...seriesEpisodesList];
+    } else {
+      finalTracks = seriesEpisodesList;
+    }
+  }
+
   return {
     type,
     id,
     title,
-    author,
-    coverUrl,
-    tracks
+    author: parentShowData?.title || author,
+    coverUrl: parentShowData?.coverUrl || coverUrl,
+    tracks: finalTracks,
+    singleTrack: singleTrackItem,
+    seriesEpisodes: seriesEpisodesList,
+    parentShow: parentShowData
   };
 }
 
@@ -971,24 +1095,124 @@ async function resolveSpotifyUrl(url: string) {
 
 // Resolve Spotify URL
 app.get("/api/spotify/resolve", async (req, res) => {
-  const { url } = req.query;
+  const { url, expandSeries } = req.query;
   if (!url || typeof url !== "string") {
     return res.status(400).json({ error: "url parametresi gereklidir." });
   }
 
-  const cached = getCached(spotifyCache, url.trim());
+  const shouldExpand = expandSeries !== "false";
+  const cacheKey = `${url.trim()}_expand_${shouldExpand}`;
+  const cached = getCached(spotifyCache, cacheKey);
   if (cached) {
     return res.json(cached);
   }
 
   try {
-    const result = await resolveSpotifyUrl(url);
-    setCached(spotifyCache, url.trim(), result);
+    const result = await resolveSpotifyUrl(url, { expandSeries: shouldExpand });
+    setCached(spotifyCache, cacheKey, result);
     res.json(result);
   } catch (err: any) {
     console.error("Resolve error:", err);
     res.status(500).json({ error: err.message || "Spotify listesi çözümlenemedi." });
   }
+});
+
+// Spotify Public Search API (Playlists, Podcasts, Series)
+app.get("/api/spotify/search", async (req, res) => {
+  const { q = "", type = "all" } = req.query;
+  const query = String(q).trim();
+  if (!query) {
+    return res.json({ items: [] });
+  }
+
+  const cacheKey = `sp_search_${query.toLowerCase()}_${type}`;
+  const cached = getCached(spotifyCache, cacheKey);
+  if (cached) {
+    return res.json(cached);
+  }
+
+  const items: any[] = [];
+  const seenIds = new Set<string>();
+
+  // 1. Search iTunes open podcast directory
+  if (type === "all" || type === "show" || type === "podcast") {
+    try {
+      const itunesRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=podcast&limit=8`);
+      if (itunesRes.ok) {
+        const data = await itunesRes.json();
+        for (const item of (data.results || [])) {
+          const podId = `pod_${item.collectionId}`;
+          if (!seenIds.has(podId)) {
+            seenIds.add(podId);
+            items.push({
+              id: podId,
+              type: 'show',
+              title: item.collectionName,
+              author: item.artistName || "Yayıncı",
+              coverUrl: item.artworkUrl600 || item.artworkUrl100 || "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600",
+              trackCount: item.trackCount || 10,
+              description: `${item.primaryGenreName || 'Podcast'} serisi. Tüm bölümleri eksiksiz aktarılabilir.`,
+              spotifyUrl: item.collectionViewUrl || `https://open.spotify.com/search/${encodeURIComponent(item.collectionName)}`,
+              isPodcast: true,
+              category: 'Podcast Yayınları'
+            });
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("iTunes podcast search error:", e);
+    }
+  }
+
+  // 2. Search Spotify Playlists via DuckDuckGo Scraper
+  if (type === "all" || type === "playlist") {
+    try {
+      const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent('site:open.spotify.com/playlist ' + query)}`;
+      const ddgRes = await fetch(ddgUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+      });
+      if (ddgRes.ok) {
+        const html = await ddgRes.text();
+        const pMatches = [...html.matchAll(/open\.spotify\.com\/playlist\/([a-zA-Z0-9]{22})/g)];
+        const ids = [...new Set(pMatches.map(m => m[1]))].slice(0, 6);
+        for (const pid of ids) {
+          if (!seenIds.has(pid)) {
+            seenIds.add(pid);
+            items.push({
+              id: pid,
+              type: 'playlist',
+              title: `${query} (Spotify Çalma Listesi)`,
+              author: 'Spotify',
+              coverUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600',
+              trackCount: 35,
+              description: 'Spotify resmi/kullanıcı çalma listesi.',
+              spotifyUrl: `https://open.spotify.com/playlist/${pid}`,
+              isPodcast: false,
+              category: 'Çalma Listeleri'
+            });
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Spotify playlist search error:", e);
+    }
+  }
+
+  const responseData = { items };
+  setCached(spotifyCache, cacheKey, responseData);
+  res.json(responseData);
+});
+
+// Spotify Public Browse API
+app.get("/api/spotify/browse", async (_req, res) => {
+  res.json({
+    categories: [
+      { id: "poetry_podcasts", name: "Şiir & Edebiyat & Podcastler" },
+      { id: "turkish_pop", name: "Türkçe Pop & Zirvedekiler" },
+      { id: "acoustic", name: "Akustik & Dinginlik" },
+      { id: "global_hits", name: "Global Top Hits" }
+    ]
+  });
 });
 
 // Universal media resolver endpoint (Spotify, YouTube, Podcasts)

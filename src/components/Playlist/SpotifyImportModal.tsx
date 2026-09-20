@@ -1,10 +1,11 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Music2, Link as LinkIcon, Sparkles, Check, Loader2, ListMusic, Play, Volume2, Search, Filter, ShieldCheck, Zap } from 'lucide-react';
+import { X, Music2, Link as LinkIcon, Sparkles, Check, Loader2, ListMusic, Play, Volume2, Search, Filter, ShieldCheck, Zap, Radio, BookOpen, Compass } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Playlist, Track } from '../../types';
 import { parseSpotifyUrl, createTracksFromSpotifyImport, SpotifyParsedResult } from '../../services/spotifyParser';
 import { audioEngine } from '../../services/audioEngine';
+import { searchSpotifyPublic, FEATURED_SPOTIFY_COLLECTIONS, SpotifyPublicItem } from '../../services/spotifyApiService';
 
 interface SpotifyImportModalProps {
   isOpen: boolean;
@@ -21,10 +22,12 @@ export const SpotifyImportModal: React.FC<SpotifyImportModalProps> = ({
   currentPlaylistId,
   onImportTracks
 }) => {
+  const [activeTab, setActiveTab] = useState<'url' | 'browse'>('url');
   const [spotifyUrl, setSpotifyUrl] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [progressText, setProgressText] = useState('Spotify verileri çözümleniyor...');
   const [parsedData, setParsedData] = useState<SpotifyParsedResult | null>(null);
+  const [useFullSeries, setUseFullSeries] = useState(true);
   const [targetChoice, setTargetChoice] = useState<'current' | 'new'>(currentPlaylistId ? 'current' : 'new');
   const [selectedPlaylistId, setSelectedPlaylistId] = useState(currentPlaylistId || playlists[0]?.id || '');
   const [newPlaylistName, setNewPlaylistName] = useState('');
@@ -34,13 +37,54 @@ export const SpotifyImportModal: React.FC<SpotifyImportModalProps> = ({
   const [searchFilter, setSearchFilter] = useState('');
   const [maxTrackLimit, setMaxTrackLimit] = useState<number>(1000);
 
+  // Browse & Live Search states
+  const [browseQuery, setBrowseQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState<string>('Tümü');
+  const [browseItems, setBrowseItems] = useState<SpotifyPublicItem[]>(FEATURED_SPOTIFY_COLLECTIONS);
+  const [isSearchingBrowse, setIsSearchingBrowse] = useState(false);
+
+  // Debounced search for Browse tab
+  useEffect(() => {
+    if (activeTab !== 'browse') return;
+    const timer = setTimeout(async () => {
+      setIsSearchingBrowse(true);
+      try {
+        const results = await searchSpotifyPublic(browseQuery);
+        setBrowseItems(results);
+      } catch (err) {
+        console.warn('Browse search error:', err);
+      } finally {
+        setIsSearchingBrowse(false);
+      }
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [browseQuery, activeTab]);
+
+  const filteredBrowseItems = useMemo(() => {
+    if (selectedCategory === 'Tümü') return browseItems;
+    return browseItems.filter(item => item.category === selectedCategory || (selectedCategory === 'Podcast Yayınları' && item.isPodcast));
+  }, [browseItems, selectedCategory]);
+
+  const effectiveTracks = useMemo(() => {
+    if (!parsedData) return [];
+    if (parsedData.type === 'episode' && !useFullSeries && parsedData.singleTrack) {
+      return [parsedData.singleTrack];
+    }
+    return parsedData.tracks || [];
+  }, [parsedData, useFullSeries]);
+
   const finalTracksToImport = useMemo(() => {
     if (!parsedData) return [];
-    return createTracksFromSpotifyImport(parsedData, {
+    const baseResult: SpotifyParsedResult = {
+      ...parsedData,
+      tracks: effectiveTracks
+    };
+    return createTracksFromSpotifyImport(baseResult, {
       deduplicate,
       maxTracks: maxTrackLimit
     });
-  }, [parsedData, deduplicate, maxTrackLimit]);
+  }, [parsedData, effectiveTracks, deduplicate, maxTrackLimit]);
 
   const filteredPreviewTracks = useMemo(() => {
     if (!finalTracksToImport) return [];
@@ -59,25 +103,28 @@ export const SpotifyImportModal: React.FC<SpotifyImportModalProps> = ({
     return `${mins} dakika`;
   }, [finalTracksToImport]);
 
-  const handleParse = async () => {
-    if (!spotifyUrl.trim()) return;
+  const handleParse = async (overrideUrl?: string) => {
+    const urlToUse = overrideUrl || spotifyUrl;
+    if (!urlToUse.trim()) return;
     setIsLoading(true);
     setErrorMsg('');
     setProgressText('Spotify API ile bağlantı kuruluyor...');
 
     try {
       setTimeout(() => {
-        setProgressText('Sayfalar taranıyor ve 1000 şarkıya kadar taranıyor...');
-      }, 1200);
+        setProgressText('Bölümler ve şarkı listesi eksiksiz taranıyor...');
+      }, 1000);
 
-      const result = await parseSpotifyUrl(spotifyUrl);
+      const result = await parseSpotifyUrl(urlToUse);
       if (!result || (result.tracks && result.tracks.length === 0)) {
-        setErrorMsg('Spotify listesi veya şarkısı çözümlenemedi. Lütfen geçerli bir Spotify URL veya paylaşım bağlantısı girin.');
+        setErrorMsg('Spotify listesi veya şarkısı çözümlenemedi. Lütfen geçerli bir Spotify veya podcast bağlantısı girin.');
         setIsLoading(false);
         return;
       }
       setParsedData(result);
-      setNewPlaylistName(result.title);
+      setUseFullSeries(true);
+      setNewPlaylistName(result.parentShow?.title || result.title);
+      setActiveTab('url');
     } catch (e: any) {
       setErrorMsg(e.message || 'Spotify verisi çekilirken bir sorun oluştu.');
     } finally {
@@ -85,11 +132,18 @@ export const SpotifyImportModal: React.FC<SpotifyImportModalProps> = ({
     }
   };
 
+  const handleSelectCollection = (item: SpotifyPublicItem) => {
+    setSpotifyUrl(item.spotifyUrl);
+    handleParse(item.spotifyUrl);
+  };
+
   const handleImport = () => {
     if (finalTracksToImport.length === 0) return;
     
+    const listTitle = newPlaylistName || parsedData?.parentShow?.title || parsedData?.title || 'Spotify İçe Aktarma';
+
     if (targetChoice === 'new') {
-      onImportTracks(finalTracksToImport, 'NEW_PLAYLIST', newPlaylistName || parsedData?.title || 'Spotify İçe Aktarma');
+      onImportTracks(finalTracksToImport, 'NEW_PLAYLIST', listTitle);
     } else {
       onImportTracks(finalTracksToImport, selectedPlaylistId);
     }
@@ -108,6 +162,17 @@ export const SpotifyImportModal: React.FC<SpotifyImportModalProps> = ({
     }
   };
 
+  const getTypeLabel = (type: string) => {
+    switch (type) {
+      case 'playlist': return 'Çalma Listesi';
+      case 'album': return 'Albüm';
+      case 'show': return 'Podcast / Şiir Serisi';
+      case 'episode': return 'Podcast / Şiir Bölümü';
+      case 'track': return 'Şarkı';
+      default: return 'Medya';
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -117,7 +182,7 @@ export const SpotifyImportModal: React.FC<SpotifyImportModalProps> = ({
           initial={{ opacity: 0, scale: 0.95, y: 20 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 20 }}
-          className="relative w-full max-w-2xl bg-neutral-900 border border-neutral-800 rounded-2xl shadow-2xl overflow-hidden text-neutral-100 max-h-[90vh] flex flex-col"
+          className="relative w-full max-w-2xl bg-neutral-900 border border-neutral-800 rounded-2xl shadow-2xl overflow-hidden text-neutral-100 max-h-[92vh] flex flex-col"
         >
           {/* Header */}
           <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-800 bg-neutral-900/90 shrink-0">
@@ -127,12 +192,12 @@ export const SpotifyImportModal: React.FC<SpotifyImportModalProps> = ({
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <h2 className="text-base font-bold text-white">Spotify Çalma Listesi İçe Aktar</h2>
+                  <h2 className="text-base font-bold text-white">Spotify & Podcast İçe Aktarma</h2>
                   <span className="flex items-center gap-1 text-[10px] uppercase font-extrabold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                    <Zap className="w-3 h-3 text-emerald-400" /> 1000 Şarkı Desteği
+                    <Zap className="w-3 h-3 text-emerald-400" /> Tam Seri & 1000 Parça
                   </span>
                 </div>
-                <p className="text-xs text-neutral-400">Tek tıkla 1000 şarkıya kadar eksiksiz ve orijinal ses eşleşmesiyle aktarın</p>
+                <p className="text-xs text-neutral-400">Şiir serileri, podcastler ve çalma listelerini tüm bölümleriyle anında çekin</p>
               </div>
             </div>
             <button
@@ -143,80 +208,180 @@ export const SpotifyImportModal: React.FC<SpotifyImportModalProps> = ({
             </button>
           </div>
 
-          <div className="p-6 space-y-5 overflow-y-auto flex-1 custom-scrollbar">
-            {/* Input URL */}
-            <div>
-              <label className="text-xs font-semibold text-neutral-300 mb-1.5 flex items-center gap-1.5">
-                <LinkIcon className="w-3.5 h-3.5 text-[#1DB954]" /> Spotify URL'si veya Paylaşım Bağlantısı
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M..."
-                  value={spotifyUrl}
-                  onChange={(e) => setSpotifyUrl(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') handleParse(); }}
-                  className="flex-1 px-3.5 py-2.5 bg-neutral-950 border border-neutral-800 rounded-xl text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-[#1DB954]"
-                />
-                <button
-                  onClick={handleParse}
-                  disabled={isLoading || !spotifyUrl.trim()}
-                  className="px-5 py-2.5 bg-[#1DB954] hover:bg-[#1ed760] disabled:opacity-50 text-black text-xs font-bold rounded-xl flex items-center gap-2 transition shrink-0 cursor-pointer shadow-md shadow-[#1DB954]/20"
-                >
-                  {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Çözümle (1000 Max)'}
-                </button>
-              </div>
-              {errorMsg && <p className="text-xs text-rose-400 mt-2">{errorMsg}</p>}
-            </div>
+          {/* Navigation Tabs */}
+          <div className="flex border-b border-neutral-800 bg-neutral-950/70 px-6 pt-2">
+            <button
+              onClick={() => setActiveTab('url')}
+              className={`flex items-center gap-2 pb-2.5 px-4 text-xs font-bold border-b-2 transition ${
+                activeTab === 'url'
+                  ? 'border-[#1DB954] text-[#1DB954]'
+                  : 'border-transparent text-neutral-400 hover:text-white'
+              }`}
+            >
+              <LinkIcon className="w-3.5 h-3.5" /> Link İle Aktar
+            </button>
+            <button
+              onClick={() => setActiveTab('browse')}
+              className={`flex items-center gap-2 pb-2.5 px-4 text-xs font-bold border-b-2 transition ${
+                activeTab === 'browse'
+                  ? 'border-[#1DB954] text-[#1DB954]'
+                  : 'border-transparent text-neutral-400 hover:text-white'
+              }`}
+            >
+              <Compass className="w-3.5 h-3.5" /> Spotify'da Canlı Keşfet & Ara
+            </button>
+          </div>
 
-            {/* Loading Indicator */}
-            {isLoading && (
-              <div className="p-4 bg-neutral-950 rounded-xl border border-neutral-800 flex items-center gap-3">
-                <Loader2 className="w-5 h-5 animate-spin text-[#1DB954]" />
-                <div className="text-xs text-neutral-300">
-                  <div className="font-semibold text-white">{progressText}</div>
-                  <div className="text-[11px] text-neutral-500">Büyük çalma listeleri sayfalama ile taranıyor...</div>
+          <div className="p-6 space-y-5 overflow-y-auto flex-1 custom-scrollbar">
+            {/* TAB 1: Link Input Mode */}
+            {activeTab === 'url' && (
+              <>
+                {/* Input URL */}
+                <div>
+                  <label className="text-xs font-semibold text-neutral-300 mb-1.5 flex items-center gap-1.5">
+                    <LinkIcon className="w-3.5 h-3.5 text-[#1DB954]" /> Spotify veya Podcast Bağlantısı
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="https://open.spotify.com/playlist/... veya /episode/... veya /show/..."
+                      value={spotifyUrl}
+                      onChange={(e) => setSpotifyUrl(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleParse(); }}
+                      className="flex-1 px-3.5 py-2.5 bg-neutral-950 border border-neutral-800 rounded-xl text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-[#1DB954]"
+                    />
+                    <button
+                      onClick={() => handleParse()}
+                      disabled={isLoading || !spotifyUrl.trim()}
+                      className="px-5 py-2.5 bg-[#1DB954] hover:bg-[#1ed760] disabled:opacity-50 text-black text-xs font-bold rounded-xl flex items-center gap-2 transition shrink-0 cursor-pointer shadow-md shadow-[#1DB954]/20"
+                    >
+                      {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Çözümle & Tümünü Çek'}
+                    </button>
+                  </div>
+                  {errorMsg && <p className="text-xs text-rose-400 mt-2">{errorMsg}</p>}
                 </div>
-              </div>
+
+                {/* Loading Indicator */}
+                {isLoading && (
+                  <div className="p-4 bg-neutral-950 rounded-xl border border-neutral-800 flex items-center gap-3">
+                    <Loader2 className="w-5 h-5 animate-spin text-[#1DB954]" />
+                    <div className="text-xs text-neutral-300">
+                      <div className="font-semibold text-white">{progressText}</div>
+                      <div className="text-[11px] text-neutral-500">Tüm şiirler, podcast bölümleri veya şarkılar taranıyor...</div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Quick Examples */}
+                {!parsedData && !isLoading && (
+                  <div className="p-3.5 bg-neutral-950/60 rounded-xl border border-neutral-800 space-y-2">
+                    <div className="text-[11px] text-neutral-400 font-medium flex items-center justify-between">
+                      <span>Önerilen Hızlı Aktarımlar:</span>
+                      <span className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1">
+                        <ShieldCheck className="w-3 h-3" /> Tüm Seriyi Eksiksiz Çeker
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => {
+                          const url = 'https://open.spotify.com/episode/4cto1WaeLmuOM1PsGB097p';
+                          setSpotifyUrl(url);
+                          handleParse(url);
+                        }}
+                        className="text-[11px] px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-neutral-200 rounded-lg border border-neutral-800 transition flex items-center gap-1.5"
+                      >
+                        <BookOpen className="w-3 h-3 text-emerald-400" /> Yıldız Kenter Şiir Serisi (13 Bölüm)
+                      </button>
+                      <button
+                        onClick={() => {
+                          const url = 'https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M';
+                          setSpotifyUrl(url);
+                          handleParse(url);
+                        }}
+                        className="text-[11px] px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 rounded-lg border border-neutral-800 transition"
+                      >
+                        🔥 Today's Top Hits (50 Şarkı)
+                      </button>
+                      <button
+                        onClick={() => {
+                          const url = 'https://open.spotify.com/playlist/37i9dQZF1DX0XUsuxWHRQd';
+                          setSpotifyUrl(url);
+                          handleParse(url);
+                        }}
+                        className="text-[11px] px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 rounded-lg border border-neutral-800 transition"
+                      >
+                        🌟 Türkçe Pop Zirve (50 Şarkı)
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
 
-            {/* Example links */}
-            {!parsedData && !isLoading && (
-              <div className="p-3.5 bg-neutral-950/60 rounded-xl border border-neutral-800">
-                <div className="text-[11px] text-neutral-400 font-medium mb-2 flex items-center justify-between">
-                  <span>Hızlı Deneme Bağlantıları:</span>
-                  <span className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1">
-                    <ShieldCheck className="w-3 h-3" /> Orijinal Stüdyo & Kayıp Olmadan
-                  </span>
+            {/* TAB 2: Live Browse & Search Mode */}
+            {activeTab === 'browse' && (
+              <div className="space-y-4">
+                {/* Search Bar */}
+                <div className="relative">
+                  <Search className="w-4 h-4 text-neutral-400 absolute left-3.5 top-3" />
+                  <input
+                    type="text"
+                    placeholder="Spotify'da çalma listesi, şiir, podcast veya sanatçı ara..."
+                    value={browseQuery}
+                    onChange={(e) => setBrowseQuery(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2.5 bg-neutral-950 border border-neutral-800 rounded-xl text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-[#1DB954]"
+                  />
+                  {isSearchingBrowse && (
+                    <Loader2 className="w-4 h-4 animate-spin text-[#1DB954] absolute right-3.5 top-3" />
+                  )}
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    onClick={() => {
-                      const url = 'https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M';
-                      setSpotifyUrl(url);
-                    }}
-                    className="text-[11px] px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 rounded-lg border border-neutral-800 transition"
-                  >
-                    🔥 Today's Top Hits (50 Şarkı)
-                  </button>
-                  <button
-                    onClick={() => {
-                      const url = 'https://open.spotify.com/playlist/37i9dQZF1DX0XUsuxWHRQd';
-                      setSpotifyUrl(url);
-                    }}
-                    className="text-[11px] px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 rounded-lg border border-neutral-800 transition"
-                  >
-                    🌟 RapCaviar (Geniş Liste)
-                  </button>
-                  <button
-                    onClick={() => {
-                      const url = 'https://open.spotify.com/track/7bxaFZ1O3cHkgLKMsdC3xR';
-                      setSpotifyUrl(url);
-                    }}
-                    className="text-[11px] px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 rounded-lg border border-neutral-800 transition"
-                  >
-                    🎵 Tek Şarkı (Tame Impala)
-                  </button>
+
+                {/* Categories */}
+                <div className="flex flex-wrap gap-1.5">
+                  {['Tümü', 'Şiir & Edebiyat', 'Pop & Trendler', 'Sakinlik & Akustik', 'Podcast Yayınları'].map(cat => (
+                    <button
+                      key={cat}
+                      onClick={() => setSelectedCategory(cat)}
+                      className={`text-[11px] px-3 py-1 rounded-lg border transition ${
+                        selectedCategory === cat
+                          ? 'bg-[#1DB954] text-black font-bold border-[#1DB954]'
+                          : 'bg-neutral-950 border-neutral-800 text-neutral-400 hover:text-white'
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Items Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-72 overflow-y-auto pr-1 custom-scrollbar">
+                  {filteredBrowseItems.map((item) => (
+                    <div
+                      key={item.id}
+                      onClick={() => handleSelectCollection(item)}
+                      className="flex items-center gap-3 p-3 bg-neutral-950/80 hover:bg-neutral-900 border border-neutral-800/80 hover:border-[#1DB954]/50 rounded-xl cursor-pointer transition group text-left"
+                    >
+                      <img
+                        src={item.coverUrl}
+                        alt=""
+                        className="w-12 h-12 rounded-lg object-cover border border-neutral-800 shrink-0"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[9px] uppercase font-bold text-[#1DB954] bg-[#1DB954]/10 px-1.5 py-0.5 rounded border border-[#1DB954]/20">
+                            {item.isPodcast ? 'Podcast & Şiir' : 'Çalma Listesi'}
+                          </span>
+                          <span className="text-[10px] text-neutral-400 font-semibold">
+                            {item.trackCount} parça
+                          </span>
+                        </div>
+                        <h4 className="text-xs font-bold text-white truncate mt-0.5 group-hover:text-[#1DB954] transition">
+                          {item.title}
+                        </h4>
+                        <p className="text-[11px] text-neutral-400 truncate">{item.author}</p>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
@@ -228,7 +393,7 @@ export const SpotifyImportModal: React.FC<SpotifyImportModalProps> = ({
                 animate={{ opacity: 1, y: 0 }}
                 className="p-4 bg-neutral-950 rounded-xl border border-[#1DB954]/30 space-y-4"
               >
-                {/* Playlist Info */}
+                {/* Entity Info */}
                 <div className="flex items-center gap-3">
                   <img
                     src={parsedData.thumbnailUrl}
@@ -238,16 +403,55 @@ export const SpotifyImportModal: React.FC<SpotifyImportModalProps> = ({
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-[10px] uppercase font-extrabold text-[#1DB954] tracking-wider px-2 py-0.5 bg-[#1DB954]/10 rounded border border-[#1DB954]/20">
-                        {parsedData.type === 'playlist' ? 'Çalma Listesi' : parsedData.type === 'album' ? 'Albüm' : 'Şarkı'}
+                        {getTypeLabel(parsedData.type)}
                       </span>
                       <span className="text-[11px] text-emerald-300 font-bold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                        {finalTracksToImport.length} şarkı ({totalCalculatedDuration})
+                        {finalTracksToImport.length} içerik ({totalCalculatedDuration})
                       </span>
                     </div>
-                    <h3 className="text-sm font-bold text-white truncate mt-1">{parsedData.title}</h3>
+                    <h3 className="text-sm font-bold text-white truncate mt-1">
+                      {parsedData.parentShow?.title || parsedData.title}
+                    </h3>
                     <p className="text-xs text-neutral-400 truncate">{parsedData.authorName || 'Spotify'}</p>
                   </div>
                 </div>
+
+                {/* Smart Series Detection Banner */}
+                {parsedData.parentShow && (
+                  <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                        '{parsedData.parentShow.title}' Serisinin Tüm Bölümleri Bulundu ({parsedData.tracks.length} Kayıt)
+                      </div>
+                      <p className="text-[11px] text-neutral-400">
+                        Tek bir kayıt yerine serideki diğer tüm şiirler ve ses kayıtları otomatik dahil edildi.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setUseFullSeries(true)}
+                        className={`px-3 py-1 text-[11px] font-bold rounded-lg transition ${
+                          useFullSeries ? 'bg-emerald-500 text-black shadow-md shadow-emerald-500/20' : 'bg-neutral-800 text-neutral-300 hover:text-white'
+                        }`}
+                      >
+                        Tüm Seri ({parsedData.tracks.length})
+                      </button>
+                      {parsedData.singleTrack && (
+                        <button
+                          type="button"
+                          onClick={() => setUseFullSeries(false)}
+                          className={`px-3 py-1 text-[11px] font-bold rounded-lg transition ${
+                            !useFullSeries ? 'bg-emerald-500 text-black shadow-md shadow-emerald-500/20' : 'bg-neutral-800 text-neutral-300 hover:text-white'
+                          }`}
+                        >
+                          Yalnızca Bu (1)
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 {/* Import Options: Limit & Deduplication */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-neutral-800/80">
@@ -284,7 +488,7 @@ export const SpotifyImportModal: React.FC<SpotifyImportModalProps> = ({
                 <div className="space-y-2 pt-2 border-t border-neutral-800/80">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[11px] font-semibold text-neutral-400">
-                      Aktarılacak Şarkılar ({finalTracksToImport.length}):
+                      Aktarılacak Parçalar ({finalTracksToImport.length}):
                     </span>
                     <div className="relative w-44">
                       <Search className="w-3.5 h-3.5 text-neutral-500 absolute left-2.5 top-2" />
@@ -404,7 +608,7 @@ export const SpotifyImportModal: React.FC<SpotifyImportModalProps> = ({
                 disabled={finalTracksToImport.length === 0}
                 className="px-5 py-2.5 bg-[#1DB954] hover:bg-[#1ed760] disabled:opacity-50 text-black text-xs font-bold rounded-full transition flex items-center gap-1.5 shadow-lg shadow-[#1DB954]/25 cursor-pointer"
               >
-                <Sparkles className="w-3.5 h-3.5" /> {finalTracksToImport.length} Şarkıyı Aktar & Çal
+                <Sparkles className="w-3.5 h-3.5" /> {finalTracksToImport.length} Parçayı Aktar & Çal
               </button>
             )}
           </div>

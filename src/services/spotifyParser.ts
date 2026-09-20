@@ -1,13 +1,21 @@
 import { Track } from '../types';
 
 export interface SpotifyParsedResult {
-  type: 'playlist' | 'track' | 'album' | 'artist' | 'unknown';
+  type: 'playlist' | 'track' | 'album' | 'artist' | 'episode' | 'show' | 'unknown';
   id: string;
   url: string;
   title: string;
   authorName?: string;
   thumbnailUrl?: string;
   tracks: Track[];
+  singleTrack?: Track;
+  seriesEpisodes?: Track[];
+  parentShow?: {
+    id: string;
+    title: string;
+    totalEpisodes: number;
+    coverUrl?: string;
+  };
 }
 
 /**
@@ -135,10 +143,10 @@ async function fetchWithCorsFallback(targetUrl: string): Promise<string | null> 
 export async function parseSpotifyUrl(urlInput: string): Promise<SpotifyParsedResult | null> {
   const trimmed = urlInput.trim();
   let spotifyId = '';
-  let type: 'playlist' | 'track' | 'album' | 'artist' | 'unknown' = 'unknown';
+  let type: 'playlist' | 'track' | 'album' | 'artist' | 'episode' | 'show' | 'unknown' = 'unknown';
 
-  // Support international localized URLs like /intl-tr/playlist/..., /intl-en/..., plain /playlist/..., etc.
-  const match = trimmed.match(/open\.spotify\.com\/(?:[a-zA-Z]{2}(?:-[a-zA-Z]{2})?\/)?(?:intl-[a-z]{2}\/)?(playlist|track|album|artist)\/([a-zA-Z0-9]+)/i);
+  // Support international localized URLs like /intl-tr/playlist/..., /intl-en/..., plain /playlist/..., /episode/..., /show/..., etc.
+  const match = trimmed.match(/open\.spotify\.com\/(?:[a-zA-Z]{2}(?:-[a-zA-Z]{2})?\/)?(?:intl-[a-z]{2}\/)?(playlist|track|album|artist|episode|show)\/([a-zA-Z0-9]+)/i);
   if (match) {
     type = match[1].toLowerCase() as any;
     spotifyId = match[2];
@@ -165,7 +173,7 @@ export async function parseSpotifyUrl(urlInput: string): Promise<SpotifyParsedRe
 
   // 1. Try resolving via backend endpoint (if server is active)
   try {
-    const serverRes = await fetch(`/api/spotify/resolve?url=${encodeURIComponent(cleanUrl)}`);
+    const serverRes = await fetch(`/api/spotify/resolve?url=${encodeURIComponent(cleanUrl)}&expandSeries=true`);
     if (serverRes.ok) {
       const serverData = await serverRes.json();
       if (serverData && serverData.tracks && serverData.tracks.length > 0) {
@@ -176,7 +184,10 @@ export async function parseSpotifyUrl(urlInput: string): Promise<SpotifyParsedRe
           title: serverData.title,
           authorName: serverData.author,
           thumbnailUrl: serverData.coverUrl,
-          tracks: serverData.tracks
+          tracks: serverData.tracks,
+          singleTrack: serverData.singleTrack,
+          seriesEpisodes: serverData.seriesEpisodes,
+          parentShow: serverData.parentShow
         };
       }
     }
@@ -203,7 +214,7 @@ export async function parseSpotifyUrl(urlInput: string): Promise<SpotifyParsedRe
             entity.images?.[0]?.url ||
             'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80';
 
-          const rawList = type === 'track' ? [entity] : (entity.trackList || []);
+          const rawList = (type === 'track' || type === 'episode') ? [entity] : (entity.trackList || entity.episodesList || entity.episodes || []);
 
           const tracks: Track[] = rawList.map((t: any, idx: number) => {
             const trkTitle = t.title || t.name || `Şarkı #${idx + 1}`;
