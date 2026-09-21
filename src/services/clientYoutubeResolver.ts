@@ -6,19 +6,23 @@
 // Memory cache for resolved track IDs to eliminate redundant lookups
 const clientYtCache = new Map<string, { youtubeId: string; duration: number; candidateIds: string[] }>();
 
-// Seed common popular Turkish tracks so they play instantly (< 1ms) with zero network round-trip!
+// Verified popular Turkish tracks with genuine, active, embeddable YouTube IDs for instant playback (< 1ms)
 const POPULAR_PRESETS: Record<string, { id: string; duration: number; candidates: string[] }> = {
-  // Ümit Besen - Okul Yolunda
-  'okul yolunda___ümit besen': { id: 'x_7p161uI6g', duration: 275, candidates: ['x_7p161uI6g', 'y_5_zW_Qx7E', '8s94v2z0UCo'] },
-  'okul yolunda___umit besen': { id: 'x_7p161uI6g', duration: 275, candidates: ['x_7p161uI6g', 'y_5_zW_Qx7E'] },
-  'nikah masası___ümit besen': { id: 'k9Vz333jJq8', duration: 295, candidates: ['k9Vz333jJq8', 'Z_E7V8Pqy3k'] },
-  'minik serçe___sezen aksu': { id: 'C97J5H7vIuo', duration: 250, candidates: ['C97J5H7vIuo'] },
-  'belalım___sezen aksu': { id: 'V7wF9K8XmN0', duration: 320, candidates: ['V7wF9K8XmN0'] },
-  'ateşe düştüm___mert demir': { id: 'fE6kXm7Kq2s', duration: 215, candidates: ['fE6kXm7Kq2s'] },
-  'antidepresan___mert demir': { id: '7R9N5s3kX1Y', duration: 210, candidates: ['7R9N5s3kX1Y'] },
-  'affet___müslüm gürses': { id: '8R8B5n7Q2wI', duration: 270, candidates: ['8R8B5n7Q2wI'] },
-  'nilüfer___müslüm gürses': { id: 'K9N4m7s2X1Y', duration: 265, candidates: ['K9N4m7s2X1Y'] },
-  'beni yak___sezen aksu': { id: 'b7V3k9XmN0P', duration: 240, candidates: ['b7V3k9XmN0P'] }
+  // Ümit Besen - Okul Yolunda (Official Topic & netd verified IDs)
+  'okul yolunda___ümit besen': { id: 'OrCTE54XVhQ', duration: 249, candidates: ['OrCTE54XVhQ', 'KZAZVARXzi8', 'uZGs1CrZ4ZA', 'qvQitJL_b2c'] },
+  'okul yolunda___umit besen': { id: 'OrCTE54XVhQ', duration: 249, candidates: ['OrCTE54XVhQ', 'KZAZVARXzi8', 'uZGs1CrZ4ZA', 'qvQitJL_b2c'] },
+  // Ümit Besen - Nikah Masası
+  'nikah masası___ümit besen': { id: '1dOKeElDd7g', duration: 289, candidates: ['1dOKeElDd7g', 'TLq9JfpsHHg', 'MKeDY_2e1nE'] },
+  'nikah masasi___umit besen': { id: '1dOKeElDd7g', duration: 289, candidates: ['1dOKeElDd7g', 'TLq9JfpsHHg', 'MKeDY_2e1nE'] },
+  // Mert Demir - Ateşe Düştüm
+  'ateşe düştüm___mert demir': { id: 'BwB62aWpZyc', duration: 215, candidates: ['BwB62aWpZyc'] },
+  'atese dustum___mert demir': { id: 'BwB62aWpZyc', duration: 215, candidates: ['BwB62aWpZyc'] },
+  // Mert Demir & Mabel Matiz - Antidepresan
+  'antidepresan___mert demir': { id: 'i0bT-3K8GvY', duration: 210, candidates: ['i0bT-3K8GvY'] },
+  'antidepresan___mabel matiz & mert demir': { id: 'i0bT-3K8GvY', duration: 210, candidates: ['i0bT-3K8GvY'] },
+  // Müslüm Gürses - Affet
+  'affet___müslüm gürses': { id: 'dJmB4w3x6b8', duration: 270, candidates: ['dJmB4w3x6b8'] },
+  'affet___muslum gurses': { id: 'dJmB4w3x6b8', duration: 270, candidates: ['dJmB4w3x6b8'] }
 };
 
 // Invidious instances that allow open public search via CORS
@@ -39,18 +43,7 @@ export async function resolveClientTrackSource(title: string, artist: string): P
     return clientYtCache.get(key)!;
   }
 
-  // 2. Check instant presets
-  if (POPULAR_PRESETS[key]) {
-    const preset = {
-      youtubeId: POPULAR_PRESETS[key].id,
-      duration: POPULAR_PRESETS[key].duration,
-      candidateIds: POPULAR_PRESETS[key].candidates
-    };
-    clientYtCache.set(key, preset);
-    return preset;
-  }
-
-  // 3. Try Backend / Serverless Function API first
+  // 2. Try Backend / Serverless Function API first for real-time live candidates
   try {
     const res = await fetch(`/api/audio/full-source?title=${encodeURIComponent(cleanTitle)}&artist=${encodeURIComponent(cleanArtist)}`, {
       signal: AbortSignal.timeout(4500)
@@ -71,6 +64,17 @@ export async function resolveClientTrackSource(title: string, artist: string): P
     }
   } catch (err) {
     console.warn('Backend full-source lookup unavailable, initiating client fallback...', err);
+  }
+
+  // 3. Check verified instant presets
+  if (POPULAR_PRESETS[key]) {
+    const preset = {
+      youtubeId: POPULAR_PRESETS[key].id,
+      duration: POPULAR_PRESETS[key].duration,
+      candidateIds: POPULAR_PRESETS[key].candidates
+    };
+    clientYtCache.set(key, preset);
+    return preset;
   }
 
   // 4. Client-Side Fallback A: Search open Invidious instances

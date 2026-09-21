@@ -2,18 +2,24 @@ import { AudioSettings, Track } from '../types';
 import { getAudioBlobFromCache } from './storage';
 import { resolveClientTrackSource } from './clientYoutubeResolver';
 
-const STORAGE_CACHE_KEY = 'soundpulse_yt_cache_v2';
+const STORAGE_CACHE_KEY = 'soundpulse_yt_cache_v3';
 
 function loadCachedTrackIds(): Map<string, { youtubeId: string; duration?: number; candidateIds?: string[] }> {
   const map = new Map<string, { youtubeId: string; duration?: number; candidateIds?: string[] }>();
   try {
-    const raw = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_CACHE_KEY) : null;
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        for (const [k, v] of parsed) {
-          if (k && v && v.youtubeId) {
-            map.set(k, v);
+    if (typeof window !== 'undefined') {
+      // Purge old potentially poisoned caches from earlier versions
+      localStorage.removeItem('soundpulse_yt_cache_v1');
+      localStorage.removeItem('soundpulse_yt_cache_v2');
+
+      const raw = localStorage.getItem(STORAGE_CACHE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          for (const [k, v] of parsed) {
+            if (k && v && v.youtubeId && v.youtubeId !== 'x_7p161uI6g' && v.youtubeId.length === 11) {
+              map.set(k, v);
+            }
           }
         }
       }
@@ -372,9 +378,13 @@ class AudioEngine {
         return;
       }
 
-      // Normal legitimate track completion: reliably advance to next track
-      if (this.onEndedCallback) {
-        this.onEndedCallback();
+      // Normal legitimate track completion: reliably advance to next track only if it actually played through
+      if (dur > 0 && cur >= Math.max(5, dur - 4)) {
+        if (this.onEndedCallback) {
+          this.onEndedCallback();
+        }
+      } else {
+        console.warn('HTML5 ended prematurely at', cur, 's of', dur, 's for', this.currentTrack?.title);
       }
     });
 
@@ -474,14 +484,15 @@ class AudioEngine {
                     const cur = (typeof this.ytPlayer.getCurrentTime === 'function' ? this.ytPlayer.getCurrentTime() : 0) || 0;
                     const dur = (typeof this.ytPlayer.getDuration === 'function' ? this.ytPlayer.getDuration() : 0) || (this.currentTrack?.duration || 180);
 
-                    // Anti-skip guard: Only legitimately advance if the track actually played through
-                    if (cur > 10 || (dur > 0 && cur >= dur - 5)) {
+                    // Anti-skip guard: Only legitimately advance if the track actually played through to completion
+                    const hasLegitimatelyFinished = dur > 20 && (cur >= dur - 6 || cur >= dur * 0.88);
+                    if (hasLegitimatelyFinished) {
                       if (this.onEndedCallback) {
                         this.onEndedCallback();
                       }
                     } else {
                       // Premature false ended event (video restricted/blocked or unstarted)
-                      console.warn('YouTube ended prematurely at', cur, 's for', this.currentTrack?.title);
+                      console.warn('YouTube ended prematurely at', cur, 's of', dur, 's for', this.currentTrack?.title);
                       if (this.currentTrack) {
                         this.tryNextCandidateOrFallback(this.currentTrack, 0);
                       }
@@ -947,12 +958,23 @@ class AudioEngine {
     return this.playViaHtml5(track, effectiveStart);
   }
 
-  public tryNextCandidateOrFallback(track: Track, startTime = 0): void {
+  public async tryNextCandidateOrFallback(track: Track, startTime = 0): Promise<void> {
     if (!track) return;
     const candidates = track.candidateIds || [];
     const currentIndex = track.currentCandidateIndex ?? 0;
-    const nextIndex = currentIndex + 1;
+    const failedId = candidates[currentIndex] || track.youtubeId;
 
+    // Invalidate failed ID from cache so it is never repeatedly tried
+    if (failedId) {
+      const cacheKey = `${track.title.toLowerCase().trim()}___${(track.artist || '').toLowerCase().trim()}`;
+      const cached = fullTrackIdCache.get(cacheKey);
+      if (cached && cached.youtubeId === failedId) {
+        fullTrackIdCache.delete(cacheKey);
+        saveCachedTrackIds();
+      }
+    }
+
+    const nextIndex = currentIndex + 1;
     if (nextIndex < candidates.length && candidates[nextIndex]) {
       console.log(`Trying candidate ${nextIndex + 1}/${candidates.length} (${candidates[nextIndex]}) for track: "${track.title}"`);
       track.currentCandidateIndex = nextIndex;
@@ -961,16 +983,41 @@ class AudioEngine {
       return;
     }
 
-    // If no more YouTube candidates, fallback to HTML5 preview stream
-    if (track.audioUrl && !track.audioUrl.startsWith('synth:')) {
-      console.warn(`All YouTube candidates exhausted for "${track.title}". Falling back to HTML5.`);
-      this.playViaHtml5(track, startTime);
-    } else {
-      // If neither is playable, immediately advance to the next track to prevent infinite stalls
-      console.warn(`Stream exhausted for "${track.title}", auto-advancing to next track.`);
-      if (this.onEndedCallback) {
-        this.onEndedCallback();
+    // Dynamic recovery: If all static candidates failed, query backend for fresh live candidates
+    try {
+      console.log(`Attempting live candidate recovery for "${track.title}"...`);
+      const excludeParam = candidates.join(',');
+      const recRes = await fetch(`/api/audio/full-source?title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(track.artist || '')}&excludeId=${encodeURIComponent(excludeParam)}`);
+      if (recRes.ok) {
+        const recData = await recRes.json();
+        if (recData && recData.youtubeId && !candidates.includes(recData.youtubeId)) {
+          console.log(`Found fresh alternative YouTube stream (${recData.youtubeId}) for "${track.title}"`);
+          track.youtubeId = recData.youtubeId;
+          track.candidateIds = recData.candidateIds && recData.candidateIds.length > 0 ? recData.candidateIds : [recData.youtubeId];
+          track.currentCandidateIndex = 0;
+          if (recData.duration) track.duration = recData.duration;
+          this.playViaYouTube(recData.youtubeId, startTime);
+          return;
+        }
       }
+    } catch {}
+
+    // Fallback to HTML5 preview stream if available
+    if (track.audioUrl && !track.audioUrl.startsWith('synth:') && !track.audioUrl.includes('placeholder')) {
+      console.warn(`All YouTube candidates exhausted for "${track.title}". Falling back to HTML5 stream.`);
+      this.playViaHtml5(track, startTime);
+      return;
+    }
+
+    // CRITICAL FIX: NEVER AUTO-ADVANCE / SKIP TO NEXT TRACK ON LOAD FAILURE!
+    // User requested THIS specific song. Silently skipping to another song is a severe bug.
+    console.warn(`Stream exhausted for "${track.title}". Halting without skipping to next track.`);
+    this.pause();
+    if (this.onPlayStateChangeCallback) {
+      this.onPlayStateChangeCallback(false);
+    }
+    if (this.onErrorCallback) {
+      this.onErrorCallback({ message: `"${track.title}" çalınamadı. Lütfen tekrar deneyin veya arama yapın.`, track });
     }
   }
 

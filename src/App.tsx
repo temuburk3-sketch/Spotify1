@@ -344,8 +344,11 @@ export default function App() {
           handlersRef.current.handleNextTrack?.();
         }
       },
-      onError: (err) => {
+      onError: (err: any) => {
         console.warn('Audio Engine Event:', err);
+        setIsPlaying(false);
+        const msg = err?.message || 'Parça oynatılamadı. Lütfen tekrar deneyin.';
+        showToast(`⚠️ ${msg}`);
       }
     });
 
