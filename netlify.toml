@@ -10,6 +10,21 @@
   directory = "netlify/functions"
 
 [[redirects]]
+  from = "/api/spotify/resolve"
+  to = "/.netlify/functions/spotify-resolve"
+  status = 200
+
+[[redirects]]
+  from = "/api/spotify/search"
+  to = "/.netlify/functions/spotify-search"
+  status = 200
+
+[[redirects]]
+  from = "/api/radio/track"
+  to = "/.netlify/functions/radio-track"
+  status = 200
+
+[[redirects]]
   from = "/api/audio/full-source"
   to = "/.netlify/functions/full-source"
   status = 200

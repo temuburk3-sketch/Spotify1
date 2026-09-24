@@ -171,10 +171,11 @@ export async function parseSpotifyUrl(urlInput: string): Promise<SpotifyParsedRe
 
   const cleanUrl = `https://open.spotify.com/${type}/${spotifyId}`;
 
-  // 1. Try resolving via backend endpoint (if server is active)
+  // 1. Try resolving via backend / serverless endpoint
   try {
     const serverRes = await fetch(`/api/spotify/resolve?url=${encodeURIComponent(cleanUrl)}&expandSeries=true`);
-    if (serverRes.ok) {
+    const contentType = serverRes.headers.get('content-type') || '';
+    if (serverRes.ok && contentType.includes('application/json')) {
       const serverData = await serverRes.json();
       if (serverData && serverData.tracks && serverData.tracks.length > 0) {
         return {
@@ -189,10 +190,24 @@ export async function parseSpotifyUrl(urlInput: string): Promise<SpotifyParsedRe
           seriesEpisodes: serverData.seriesEpisodes,
           parentShow: serverData.parentShow
         };
+      } else if (serverData && serverData.error) {
+        throw new Error(serverData.error);
+      }
+    } else if (!serverRes.ok && contentType.includes('application/json')) {
+      try {
+        const errJson = await serverRes.json();
+        if (errJson && errJson.error) {
+          throw new Error(errJson.error);
+        }
+      } catch (e: any) {
+        if (e.message && !e.message.includes('JSON')) throw e;
       }
     }
-  } catch (err) {
-    console.warn('Server resolve failed, attempting direct and proxy fallback...', err);
+  } catch (err: any) {
+    if (err.message && (err.message.includes('Herkese Açık') || err.message.includes('Gizli') || err.message.includes('korumalı'))) {
+      throw err;
+    }
+    console.warn('Server resolve notice, checking direct embed fallback...', err);
   }
 
   // 2. Direct / Proxy Fallback: Fetch Spotify Embed and parse JSON state
@@ -201,28 +216,77 @@ export async function parseSpotifyUrl(urlInput: string): Promise<SpotifyParsedRe
     const html = await fetchWithCorsFallback(embedUrl);
 
     if (html) {
-      const nextDataMatch = html.match(/<script id="__NEXT_DATA__" type="application\/json">([^<]+)<\/script>/);
+      let entity: any = null;
+
+      // Check __NEXT_DATA__
+      const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
       if (nextDataMatch) {
-        const nextData = JSON.parse(nextDataMatch[1]);
-        const entity = nextData.props?.pageProps?.state?.data?.entity;
-        if (entity) {
-          const listTitle = entity.name || entity.title || 'Spotify Çalma Listesi';
-          const authorName = entity.subtitle || entity.artists?.[0]?.name || 'Spotify';
-          const listCover =
-            entity.visualIdentity?.image?.[0]?.url ||
-            entity.coverArt?.sources?.[0]?.url ||
-            entity.images?.[0]?.url ||
-            'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80';
+        try {
+          const nextData = JSON.parse(nextDataMatch[1]);
+          entity = nextData.props?.pageProps?.state?.data?.entity || nextData.props?.pageProps?.entity || nextData.entity;
+        } catch {}
+      }
 
-          const rawList = (type === 'track' || type === 'episode') ? [entity] : (entity.trackList || entity.episodesList || entity.episodes || []);
+      // Check initial-state (plain or base64)
+      if (!entity) {
+        const initMatch = html.match(/<script id="initial-state"[^>]*>([\s\S]*?)<\/script>/);
+        if (initMatch) {
+          try {
+            const raw = initMatch[1].trim();
+            if (raw.startsWith('{')) {
+              const data = JSON.parse(raw);
+              entity = data.data?.entity || data.entity;
+            } else {
+              const str = atob(raw);
+              const data = JSON.parse(str);
+              entity = data.data?.entity || data.entity;
+            }
+          } catch {}
+        }
+      }
 
-          const tracks: Track[] = rawList.map((t: any, idx: number) => {
+      // Check resource (base64)
+      if (!entity) {
+        const resMatch = html.match(/<script id="resource"[^>]*>([\s\S]*?)<\/script>/);
+        if (resMatch) {
+          try {
+            const raw = resMatch[1].trim();
+            const str = atob(raw);
+            const data = JSON.parse(str);
+            entity = data.data?.entity || data.entity || data;
+          } catch {}
+        }
+      }
+
+      if (entity) {
+        const listTitle = entity.name || entity.title || 'Spotify Çalma Listesi';
+        const authorName = entity.subtitle || entity.artists?.[0]?.name || 'Spotify';
+        const listCover =
+          entity.visualIdentity?.image?.[0]?.url ||
+          entity.coverArt?.sources?.[0]?.url ||
+          entity.images?.[0]?.url ||
+          'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80';
+
+        const rawList: any[] = (type === 'track' || type === 'episode')
+          ? [entity]
+          : (entity.trackList || entity.tracks?.items || entity.episodesList || entity.episodes || []);
+
+        if (rawList.length > 0) {
+          const tracks: Track[] = rawList.map((item: any, idx: number) => {
+            const t = item.track || item.episode || item;
             const trkTitle = t.title || t.name || `Şarkı #${idx + 1}`;
-            const trkArtist = t.subtitle || (t.artists && t.artists.map((a: any) => a.name).join(', ')) || authorName;
-            const trkDuration = t.duration ? Math.round(t.duration / 1000) : 190;
-            const trkCover = t.coverArt?.sources?.[0]?.url || t.visualIdentity?.image?.[0]?.url || listCover;
+            let trkArtist = t.subtitle || (t.artists && t.artists.map((a: any) => a.name).join(', ')) || authorName;
 
-            const audioUrl = t.audioPreview?.url || t.preview_url || 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview122/v4/fb/3c/74/fb3c7480-781d-1830-3edd-fd15bdb23406/mzaf_17024654962565086082.plus.aac.p.m4a';
+            if (trkTitle.includes(' - ') && (trkArtist === authorName || trkArtist === 'Spotify' || !trkArtist)) {
+              const parts = trkTitle.split(' - ');
+              if (parts.length >= 2 && parts[0].trim()) {
+                trkArtist = parts[0].trim();
+              }
+            }
+
+            const trkDuration = t.duration ? Math.round(t.duration / 1000) : (t.duration_ms ? Math.round(t.duration_ms / 1000) : 190);
+            const trkCover = t.coverArt?.sources?.[0]?.url || t.visualIdentity?.image?.[0]?.url || t.album?.images?.[0]?.url || listCover;
+            const audioUrl = t.audioPreview?.url || t.preview_url || '';
 
             return {
               id: `sp_${t.id || spotifyId}_${idx}_${Date.now()}`,
@@ -252,41 +316,56 @@ export async function parseSpotifyUrl(urlInput: string): Promise<SpotifyParsedRe
       }
     }
   } catch (err) {
-    console.warn('Direct embed parse fallback error:', err);
+    console.warn('Direct embed parse fallback notice:', err);
   }
 
-  // 3. Last resort: Spotify oEmbed API (supports CORS)
+  // 3. Fallback: Spotify oEmbed API (supports CORS)
   try {
     const oembedRes = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(cleanUrl)}`);
     if (oembedRes.ok) {
       const data = await oembedRes.json();
-      const singleMatch = await searchOriginalAudio(data.title || 'Müzik', data.author_name || '');
-      const tracks: Track[] = [{
-        id: `sp_oembed_${spotifyId}`,
-        title: data.title || 'Spotify Şarkısı',
-        artist: data.author_name || 'Spotify',
-        album: 'Spotify',
-        duration: singleMatch?.duration || 190,
-        coverUrl: data.thumbnail_url || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80',
-        audioUrl: singleMatch?.audioUrl || 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview122/v4/fb/3c/74/fb3c7480-781d-1830-3edd-fd15bdb23406/mzaf_17024654962565086082.plus.aac.p.m4a',
-        source: 'spotify',
-        spotifyId: spotifyId,
-        addedAt: new Date().toISOString(),
-        genre: 'Pop'
-      }];
+      
+      // If single track or episode, oEmbed title is the song title
+      if (type === 'track' || type === 'episode') {
+        const singleMatch = await searchOriginalAudio(data.title || 'Müzik', data.author_name || '');
+        const tracks: Track[] = [{
+          id: `sp_oembed_${spotifyId}`,
+          title: data.title || 'Spotify Şarkısı',
+          artist: data.author_name || 'Spotify',
+          album: 'Spotify',
+          duration: singleMatch?.duration || 190,
+          coverUrl: data.thumbnail_url || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80',
+          audioUrl: singleMatch?.audioUrl || '',
+          source: 'spotify',
+          spotifyId: spotifyId,
+          addedAt: new Date().toISOString(),
+          genre: 'Pop'
+        }];
 
-      return {
-        type,
-        id: spotifyId,
-        url: cleanUrl,
-        title: data.title || 'Spotify İçe Aktarma',
-        authorName: data.author_name || 'Spotify',
-        thumbnailUrl: data.thumbnail_url || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80',
-        tracks
-      };
+        return {
+          type,
+          id: spotifyId,
+          url: cleanUrl,
+          title: data.title || 'Spotify İçe Aktarma',
+          authorName: data.author_name || 'Spotify',
+          thumbnailUrl: data.thumbnail_url || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80',
+          tracks
+        };
+      }
+
+      // CRITICAL: NEVER CREATE A DUMMY TRACK FOR A PLAYLIST OR ALBUM!
+      // If oEmbed returns playlist metadata but no tracks could be extracted, throw a clear explanatory error
+      throw new Error(
+        `"${data.title || 'Bu çalma listesi'}" içeriğindeki parçalar okunamadı. ` +
+        `Çalma listesi Spotify'da "Gizli" (Özel) olabilir veya Spotify tarafından engellenmiş olabilir. ` +
+        `Lütfen Spotify uygulamasında listeyi "Herkese Açık" (Public) yapın veya şarkı adlarını girin.`
+      );
     }
-  } catch (e) {
-    console.warn('oEmbed fallback error:', e);
+  } catch (e: any) {
+    if (e.message && (e.message.includes('Herkese Açık') || e.message.includes('Gizli') || e.message.includes('okunamadı'))) {
+      throw e;
+    }
+    console.warn('oEmbed fallback notice:', e);
   }
 
   return null;
@@ -296,6 +375,9 @@ export function createTracksFromSpotifyImport(parsed: SpotifyParsedResult, optio
   let tracks = parsed.tracks && parsed.tracks.length > 0 ? [...parsed.tracks] : [];
 
   if (tracks.length === 0) {
+    if (parsed.type === 'playlist' || parsed.type === 'album') {
+      return [];
+    }
     tracks = [{
       id: `spotify_track_${Date.now()}_${parsed.id}`,
       title: parsed.title,
@@ -303,7 +385,7 @@ export function createTracksFromSpotifyImport(parsed: SpotifyParsedResult, optio
       album: parsed.title,
       duration: 190,
       coverUrl: parsed.thumbnailUrl || 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=600&auto=format&fit=crop&q=80',
-      audioUrl: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview122/v4/fb/3c/74/fb3c7480-781d-1830-3edd-fd15bdb23406/mzaf_17024654962565086082.plus.aac.p.m4a',
+      audioUrl: '',
       source: 'spotify',
       spotifyId: parsed.id,
       addedAt: new Date().toISOString(),

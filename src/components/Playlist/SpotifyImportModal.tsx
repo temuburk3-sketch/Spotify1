@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Music2, Link as LinkIcon, Sparkles, Check, Loader2, ListMusic, Play, Volume2, Search, Filter, ShieldCheck, Zap, Radio, BookOpen, Compass } from 'lucide-react';
+import { X, Music2, Link as LinkIcon, Sparkles, Check, Loader2, ListMusic, Play, Volume2, Search, Filter, ShieldCheck, Zap, Radio, BookOpen, Compass, FileText } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Playlist, Track } from '../../types';
 import { parseSpotifyUrl, createTracksFromSpotifyImport, SpotifyParsedResult } from '../../services/spotifyParser';
@@ -22,8 +22,10 @@ export const SpotifyImportModal: React.FC<SpotifyImportModalProps> = ({
   currentPlaylistId,
   onImportTracks
 }) => {
-  const [activeTab, setActiveTab] = useState<'url' | 'browse'>('url');
+  const [activeTab, setActiveTab] = useState<'url' | 'browse' | 'text'>('url');
   const [spotifyUrl, setSpotifyUrl] = useState('');
+  const [textListInput, setTextListInput] = useState('');
+  const [isParsingText, setIsParsingText] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [progressText, setProgressText] = useState('Spotify verileri çözümleniyor...');
   const [parsedData, setParsedData] = useState<SpotifyParsedResult | null>(null);
@@ -117,7 +119,7 @@ export const SpotifyImportModal: React.FC<SpotifyImportModalProps> = ({
 
       const result = await parseSpotifyUrl(urlToUse);
       if (!result || (result.tracks && result.tracks.length === 0)) {
-        setErrorMsg('Spotify listesi veya şarkısı çözümlenemedi. Lütfen geçerli bir Spotify veya podcast bağlantısı girin.');
+        setErrorMsg('Bu çalma listesindeki şarkılara ulaşılamadı. Çalma listesi Spotify uygulamasında "Gizli" (Özel) olabilir. Lütfen Spotify uygulamasında listeyi "Herkese Açık" (Public) yapın veya "Metin Listesi Yapıştır" sekmesinden şarkıları doğrudan ekleyin.');
         setIsLoading(false);
         return;
       }
@@ -129,6 +131,73 @@ export const SpotifyImportModal: React.FC<SpotifyImportModalProps> = ({
       setErrorMsg(e.message || 'Spotify verisi çekilirken bir sorun oluştu.');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleParseTextList = () => {
+    if (!textListInput.trim()) return;
+    setIsParsingText(true);
+    setErrorMsg('');
+
+    try {
+      const lines = textListInput
+        .split('\n')
+        .map(l => l.replace(/^[0-9]+[\.\-\)\s]+/, '').trim())
+        .filter(l => l.length > 1);
+
+      if (lines.length === 0) {
+        setErrorMsg('Lütfen en az bir şarkı adı girin.');
+        setIsParsingText(false);
+        return;
+      }
+
+      const parsedTracks: Track[] = lines.map((line, idx) => {
+        let title = line;
+        let artist = 'Çeşitli Sanatçılar';
+
+        if (line.includes(' - ')) {
+          const parts = line.split(' - ');
+          artist = parts[0].trim();
+          title = parts.slice(1).join(' - ').trim();
+        } else if (line.includes(' – ')) {
+          const parts = line.split(' – ');
+          artist = parts[0].trim();
+          title = parts.slice(1).join(' – ').trim();
+        } else if (line.includes(':')) {
+          const parts = line.split(':');
+          artist = parts[0].trim();
+          title = parts.slice(1).join(':').trim();
+        }
+
+        return {
+          id: `txt_${Date.now()}_${idx}`,
+          title: title || line,
+          artist: artist,
+          album: 'Özel İçe Aktarma',
+          duration: 210,
+          coverUrl: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80',
+          audioUrl: '',
+          source: 'spotify' as const,
+          addedAt: new Date().toISOString(),
+          genre: 'Özel Liste'
+        };
+      });
+
+      setParsedData({
+        type: 'playlist',
+        id: `manual_${Date.now()}`,
+        url: '',
+        title: 'Özel Liste',
+        authorName: 'Kullanıcı',
+        thumbnailUrl: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80',
+        tracks: parsedTracks
+      });
+      setNewPlaylistName('Özel Liste');
+      setActiveTab('url');
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Metin listesi çözümlenirken hata oluştu.');
+    } finally {
+      setIsParsingText(false);
     }
   };
 
@@ -221,6 +290,16 @@ export const SpotifyImportModal: React.FC<SpotifyImportModalProps> = ({
               <LinkIcon className="w-3.5 h-3.5" /> Link İle Aktar
             </button>
             <button
+              onClick={() => setActiveTab('text')}
+              className={`flex items-center gap-2 pb-2.5 px-4 text-xs font-bold border-b-2 transition ${
+                activeTab === 'text'
+                  ? 'border-[#1DB954] text-[#1DB954]'
+                  : 'border-transparent text-neutral-400 hover:text-white'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5" /> Şarkı Listesi Yapıştır
+            </button>
+            <button
               onClick={() => setActiveTab('browse')}
               className={`flex items-center gap-2 pb-2.5 px-4 text-xs font-bold border-b-2 transition ${
                 activeTab === 'browse'
@@ -258,7 +337,18 @@ export const SpotifyImportModal: React.FC<SpotifyImportModalProps> = ({
                       {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Çözümle & Tümünü Çek'}
                     </button>
                   </div>
-                  {errorMsg && <p className="text-xs text-rose-400 mt-2">{errorMsg}</p>}
+                  {errorMsg && (
+                    <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl space-y-2 mt-2.5">
+                      <p className="text-xs text-rose-300 font-medium leading-relaxed">{errorMsg}</p>
+                      <button
+                        type="button"
+                        onClick={() => { setActiveTab('text'); setErrorMsg(''); }}
+                        className="text-[11px] font-bold px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 rounded-lg border border-rose-500/30 transition flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <FileText className="w-3.5 h-3.5" /> Şarkıları Metin Olarak Yapıştırmayı Dene
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* Loading Indicator */}
@@ -318,7 +408,43 @@ export const SpotifyImportModal: React.FC<SpotifyImportModalProps> = ({
               </>
             )}
 
-            {/* TAB 2: Live Browse & Search Mode */}
+            {/* TAB 2: Text / Song List Input */}
+            {activeTab === 'text' && (
+              <div className="space-y-4">
+                <div className="p-4 bg-neutral-950/80 rounded-xl border border-neutral-800 space-y-3">
+                  <div className="flex items-center gap-2 text-xs font-bold text-white">
+                    <FileText className="w-4 h-4 text-[#1DB954]" />
+                    <span>Şarkı Listesi veya Şarkı Adlarını Yapıştırın</span>
+                  </div>
+                  <p className="text-[11px] text-neutral-400 leading-relaxed">
+                    Gizli/özel Spotify listelerinizdeki veya notlarınızdaki şarkıları buraya doğrudan yapıştırabilirsiniz. Her satıra bir şarkı gelecek şekilde format: <code>Sanatçı - Şarkı Adı</code> veya sadece şarkı adı.
+                  </p>
+                  <textarea
+                    rows={8}
+                    placeholder={`Müslüm Gürses - Affet\nSezen Aksu - Gülümse\nYıldız Tilbe - Delikanlım\nEbru Gündeş - Kurşun Adres Sormaz Ki\nFerdi Tayfur - Huzurum Kalmadı`}
+                    value={textListInput}
+                    onChange={(e) => setTextListInput(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-neutral-900 border border-neutral-800 rounded-xl text-xs text-white placeholder-neutral-600 focus:outline-none focus:border-[#1DB954] font-mono leading-relaxed"
+                  />
+                  <div className="flex justify-between items-center pt-1">
+                    <span className="text-[11px] text-neutral-500">
+                      {textListInput.split('\n').filter(l => l.trim().length > 1).length} şarkı algılandı
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleParseTextList}
+                      disabled={isParsingText || !textListInput.trim()}
+                      className="px-5 py-2.5 bg-[#1DB954] hover:bg-[#1ed760] disabled:opacity-50 text-black text-xs font-bold rounded-xl flex items-center gap-2 transition cursor-pointer shadow-md shadow-[#1DB954]/20"
+                    >
+                      {isParsingText ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                      Listeyi Çözümle & İncele
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 3: Live Browse & Search Mode */}
             {activeTab === 'browse' && (
               <div className="space-y-4">
                 {/* Search Bar */}
