@@ -109,7 +109,39 @@ async function generateJsonWithGemini<T>(
 }
 
 // In-Memory Performance Caches with auto-expiry
-const videoIdCache = new Map<string, { result: { youtubeId: string; duration?: number } | null; timestamp: number }>();
+const videoIdCache = new Map<string, { result: { youtubeId: string; duration?: number; candidateIds?: string[] } | null; timestamp: number }>();
+
+// Pre-seed videoIdCache with iconic tracks for instant 0ms radio & search resolution
+const PRESET_SEEDS: Array<{ title: string; artist: string; youtubeId: string; duration: number; candidates: string[] }> = [
+  { title: "Kurşun Adres Sormaz Ki", artist: "Ebru Gündeş", youtubeId: "Juec0RS8-sU", duration: 326, candidates: ["Juec0RS8-sU", "yOycy66e7oM"] },
+  { title: "Fırtınalar", artist: "Ebru Gündeş", youtubeId: "yOycy66e7oM", duration: 260, candidates: ["yOycy66e7oM", "Juec0RS8-sU"] },
+  { title: "Ateşe Düştüm", artist: "Mert Demir", youtubeId: "W1k92XoYj44", duration: 218, candidates: ["W1k92XoYj44", "BwB62aWpZyc"] },
+  { title: "Antidepresan", artist: "Mert Demir, Mabel Matiz", youtubeId: "eQZUgr5sw90", duration: 243, candidates: ["eQZUgr5sw90", "i0bT-3K8GvY"] },
+  { title: "Antidepresan", artist: "Mert Demir", youtubeId: "eQZUgr5sw90", duration: 243, candidates: ["eQZUgr5sw90", "i0bT-3K8GvY"] },
+  { title: "Affet", artist: "Müslüm Gürses", youtubeId: "dJmB4w3x6b8", duration: 270, candidates: ["dJmB4w3x6b8"] },
+  { title: "Med Cezir", artist: "Levent Yüksel", youtubeId: "Lw9e1JdIe2A", duration: 285, candidates: ["Lw9e1JdIe2A"] },
+  { title: "Kaybolan Yıllar", artist: "Sezen Aksu", youtubeId: "59V1z9WdK1k", duration: 245, candidates: ["59V1z9WdK1k"] },
+  { title: "Şıkıdım (Hepsi Senin Mi)", artist: "Tarkan", youtubeId: "lM68D2wTwq8", duration: 235, candidates: ["lM68D2wTwq8"] },
+  { title: "Kuzu Kuzu", artist: "Tarkan", youtubeId: "65RKYQY0P0M", duration: 254, candidates: ["65RKYQY0P0M"] },
+  { title: "Gir Kanıma", artist: "Harun Kolçak", youtubeId: "TvUquY8bVSQ", duration: 230, candidates: ["TvUquY8bVSQ"] },
+  { title: "Bir Derdim Var", artist: "Mor ve Ötesi", youtubeId: "bcHv7PjSHrs", duration: 230, candidates: ["bcHv7PjSHrs"] },
+  { title: "Aman Aman", artist: "Duman", youtubeId: "T4BkYR7IEvY", duration: 245, candidates: ["T4BkYR7IEvY"] },
+  { title: "Gülpembe", artist: "Barış Manço", youtubeId: "cBRC0BItmfk", duration: 305, candidates: ["cBRC0BItmfk"] },
+  { title: "Suspus", artist: "Ceza", youtubeId: "O--4-kh1a4c", duration: 255, candidates: ["O--4-kh1a4c"] },
+  { title: "Blinding Lights", artist: "The Weeknd", youtubeId: "4NRXx6U8ABQ", duration: 200, candidates: ["4NRXx6U8ABQ"] },
+  { title: "Birds of a Feather", artist: "Billie Eilish", youtubeId: "d5gf9dXbPi0", duration: 212, candidates: ["d5gf9dXbPi0"] },
+  { title: "Okul Yolunda", artist: "Ümit Besen", youtubeId: "OrCTE54XVhQ", duration: 249, candidates: ["OrCTE54XVhQ"] },
+  { title: "Nikah Masası", artist: "Ümit Besen", youtubeId: "1dOKeElDd7g", duration: 289, candidates: ["1dOKeElDd7g"] }
+];
+
+for (const s of PRESET_SEEDS) {
+  const k = `${s.title.toLowerCase().trim()}___${s.artist.toLowerCase().trim()}`;
+  videoIdCache.set(k, {
+    result: { youtubeId: s.youtubeId, duration: s.duration, candidateIds: s.candidates },
+    timestamp: Date.now() + 1000 * 60 * 60 * 24 // 24h
+  });
+}
+
 const searchCache = new Map<string, { data: any; timestamp: number }>();
 const spotifyCache = new Map<string, { data: any; timestamp: number }>();
 const itunesCache = new Map<string, { data: any; timestamp: number }>();
@@ -3462,17 +3494,39 @@ Provide a valid JSON array where each object has:
 
     const finalRecs = diversifiedRecs.slice(0, requestedCount);
 
-    // Multi-source enrichment with iTunes & YouTube Video IDs
+    // Multi-source enrichment with iTunes & YouTube Video IDs (Fast cache-first + background fetch)
     const enrichedTracks = await Promise.all(
       finalRecs.map(async (rec, idx) => {
         let coverUrl = 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80';
         let audioUrl = '';
         let youtubeId: string | undefined = undefined;
+        let candidateIds: string[] | undefined = undefined;
         let duration = 210;
         let album = rec.title;
 
         try {
-          const itunesMatch = await searchItunesSong(rec.title, rec.artist);
+          const itunesPromise = searchItunesSong(rec.title, rec.artist).catch(() => null);
+
+          // 1. Check in-memory videoIdCache first for instant 0ms resolution
+          const cleanT = rec.title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim().toLowerCase();
+          const cleanA = (rec.artist || '').replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim().toLowerCase();
+          const cacheKey = `${cleanT}___${cleanA}`;
+          const cachedYt = videoIdCache.get(cacheKey);
+
+          let ytMatch: any = cachedYt?.result;
+
+          // 2. If not in cache and it is the 1st or 2nd track, resolve immediately with a 2000ms timeout
+          if (!ytMatch && idx < 2) {
+            ytMatch = await Promise.race([
+              searchFullSongVideoId(rec.title, rec.artist).catch(() => null),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000)).catch(() => null)
+            ]);
+          } else if (!ytMatch) {
+            // Background pre-fetch without blocking the HTTP response
+            searchFullSongVideoId(rec.title, rec.artist).catch(() => {});
+          }
+
+          const itunesMatch = await itunesPromise;
           if (itunesMatch) {
             if (itunesMatch.coverUrl) coverUrl = itunesMatch.coverUrl;
             if (itunesMatch.previewUrl) audioUrl = itunesMatch.previewUrl;
@@ -3485,6 +3539,12 @@ Provide a valid JSON array where each object has:
               if (audiusMatch.coverUrl) coverUrl = audiusMatch.coverUrl;
               if (audiusMatch.duration) duration = audiusMatch.duration;
             }
+          }
+
+          if (ytMatch && ytMatch.youtubeId) {
+            youtubeId = ytMatch.youtubeId;
+            candidateIds = ytMatch.candidateIds || [ytMatch.youtubeId];
+            if (ytMatch.duration) duration = ytMatch.duration;
           }
         } catch (enrichErr) {
           console.warn("Song radio track enrichment warning:", rec.title, enrichErr);
@@ -3499,6 +3559,7 @@ Provide a valid JSON array where each object has:
           coverUrl: coverUrl,
           audioUrl: audioUrl,
           youtubeId: youtubeId,
+          candidateIds: candidateIds,
           startOffset: 0,
           source: 'stream' as const,
           genre: rec.genre || detectedTheme,

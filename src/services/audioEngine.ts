@@ -564,16 +564,16 @@ class AudioEngine {
           // Background stall watchdog: If user has NOT paused, but player got stuck in paused (2), unstarted (-1), or buffering (3)
           if (!this.isUserPaused && (state === 2 || state === -1 || (state === 3 && cur === this.lastYtPos))) {
             this.stallCounter++;
-            if (this.stallCounter === 3) {
+            if (this.stallCounter === 4 || this.stallCounter === 8) {
               // Try kickstarting playback with silent audio keep-alive and playVideo
               this.silentAudio?.play().catch(() => {});
               try { this.ytPlayer.playVideo(); } catch {}
-            } else if (this.stallCounter >= 6) {
-              // Stalled for ~3 seconds in background: automatically recover by falling back to HTML5 stream!
+            } else if (this.stallCounter >= 16) {
+              // Stalled for ~8 seconds: automatically recover by trying next candidate video or fresh live stream
               this.stallCounter = 0;
-              console.warn('Background playback stall detected, auto-recovering via HTML5 stream.');
+              console.warn('Playback stall detected, recovering via next candidate video or fallback.');
               if (this.currentTrack) {
-                this.playViaHtml5(this.currentTrack, cur || this.lastYtPos || 0);
+                this.tryNextCandidateOrFallback(this.currentTrack, cur || this.lastYtPos || 0);
               }
               return;
             }
@@ -1026,6 +1026,8 @@ class AudioEngine {
   private async playViaYouTube(youtubeId: string, startTime = 0): Promise<void> {
     this.activeMode = 'youtube';
     this.isUserPaused = false;
+    this.stallCounter = 0;
+    this.lastYtPos = startTime;
     this.silentAudio?.play().catch(() => {});
     this.audio.pause();
 
@@ -1076,9 +1078,9 @@ class AudioEngine {
       }
     }
 
-    // If YT failed to initialize, fallback to HTML5
+    // If YT failed to initialize, try next candidate or fallback
     if (this.currentTrack) {
-      return this.playViaHtml5(this.currentTrack, startTime);
+      return this.tryNextCandidateOrFallback(this.currentTrack, startTime);
     }
   }
 
@@ -1108,7 +1110,16 @@ class AudioEngine {
 
     const audioSrc = overrideSrc || track.audioUrl;
     if (!audioSrc || audioSrc.startsWith('synth:')) {
-      this.playProceduralSynth(track);
+      if (audioSrc && audioSrc.startsWith('synth:')) {
+        this.playProceduralSynth(track);
+      } else {
+        console.warn(`No HTML5 audio stream available for "${track.title}".`);
+        this.pause();
+        if (this.onPlayStateChangeCallback) this.onPlayStateChangeCallback(false);
+        if (this.onErrorCallback) {
+          this.onErrorCallback({ message: `"${track.title}" için ses akışı bulunamadı. Lütfen başka bir şarkı seçin.`, track });
+        }
+      }
       return;
     }
 
@@ -1128,10 +1139,20 @@ class AudioEngine {
       this.acquireWakeLock().catch(() => {});
       this.silentAudio?.pause();
     } catch (error) {
-      console.warn('Playback error, trying procedural synth fallback:', error);
-      this.playProceduralSynth(track);
-      if (this.onPlayStateChangeCallback) {
-        this.onPlayStateChangeCallback(true);
+      console.warn('Playback error for HTML5:', error);
+      if (track.audioUrl && track.audioUrl.startsWith('synth:')) {
+        this.playProceduralSynth(track);
+        if (this.onPlayStateChangeCallback) {
+          this.onPlayStateChangeCallback(true);
+        }
+      } else {
+        this.pause();
+        if (this.onPlayStateChangeCallback) {
+          this.onPlayStateChangeCallback(false);
+        }
+        if (this.onErrorCallback) {
+          this.onErrorCallback({ message: `"${track.title}" çalınırken bir hata oluştu.`, track });
+        }
       }
     }
   }

@@ -6,23 +6,54 @@
 // Memory cache for resolved track IDs to eliminate redundant lookups
 const clientYtCache = new Map<string, { youtubeId: string; duration: number; candidateIds: string[] }>();
 
-// Verified popular Turkish tracks with genuine, active, embeddable YouTube IDs for instant playback (< 1ms)
+// Verified popular tracks with genuine, active, embeddable YouTube IDs for instant playback (< 1ms)
 const POPULAR_PRESETS: Record<string, { id: string; duration: number; candidates: string[] }> = {
-  // Ümit Besen - Okul Yolunda (Official Topic & netd verified IDs)
+  // Ümit Besen - Okul Yolunda
   'okul yolunda___ümit besen': { id: 'OrCTE54XVhQ', duration: 249, candidates: ['OrCTE54XVhQ', 'KZAZVARXzi8', 'uZGs1CrZ4ZA', 'qvQitJL_b2c'] },
   'okul yolunda___umit besen': { id: 'OrCTE54XVhQ', duration: 249, candidates: ['OrCTE54XVhQ', 'KZAZVARXzi8', 'uZGs1CrZ4ZA', 'qvQitJL_b2c'] },
   // Ümit Besen - Nikah Masası
   'nikah masası___ümit besen': { id: '1dOKeElDd7g', duration: 289, candidates: ['1dOKeElDd7g', 'TLq9JfpsHHg', 'MKeDY_2e1nE'] },
   'nikah masasi___umit besen': { id: '1dOKeElDd7g', duration: 289, candidates: ['1dOKeElDd7g', 'TLq9JfpsHHg', 'MKeDY_2e1nE'] },
   // Mert Demir - Ateşe Düştüm
-  'ateşe düştüm___mert demir': { id: 'BwB62aWpZyc', duration: 215, candidates: ['BwB62aWpZyc'] },
-  'atese dustum___mert demir': { id: 'BwB62aWpZyc', duration: 215, candidates: ['BwB62aWpZyc'] },
+  'ateşe düştüm___mert demir': { id: 'W1k92XoYj44', duration: 218, candidates: ['W1k92XoYj44', 'BwB62aWpZyc', 'RQmXet6kZ-Y'] },
+  'atese dustum___mert demir': { id: 'W1k92XoYj44', duration: 218, candidates: ['W1k92XoYj44', 'BwB62aWpZyc', 'RQmXet6kZ-Y'] },
   // Mert Demir & Mabel Matiz - Antidepresan
-  'antidepresan___mert demir': { id: 'i0bT-3K8GvY', duration: 210, candidates: ['i0bT-3K8GvY'] },
-  'antidepresan___mabel matiz & mert demir': { id: 'i0bT-3K8GvY', duration: 210, candidates: ['i0bT-3K8GvY'] },
+  'antidepresan___mert demir': { id: 'eQZUgr5sw90', duration: 243, candidates: ['eQZUgr5sw90', 'i0bT-3K8GvY'] },
+  'antidepresan___mert demir, mabel matiz': { id: 'eQZUgr5sw90', duration: 243, candidates: ['eQZUgr5sw90', 'i0bT-3K8GvY'] },
+  'antidepresan___mabel matiz & mert demir': { id: 'eQZUgr5sw90', duration: 243, candidates: ['eQZUgr5sw90', 'i0bT-3K8GvY'] },
+  'antidepresan___mabel matiz': { id: 'eQZUgr5sw90', duration: 243, candidates: ['eQZUgr5sw90', 'i0bT-3K8GvY'] },
   // Müslüm Gürses - Affet
-  'affet___müslüm gürses': { id: 'dJmB4w3x6b8', duration: 270, candidates: ['dJmB4w3x6b8'] },
-  'affet___muslum gurses': { id: 'dJmB4w3x6b8', duration: 270, candidates: ['dJmB4w3x6b8'] }
+  'affet___müslüm gürses': { id: 'dJmB4w3x6b8', duration: 270, candidates: ['dJmB4w3x6b8', 'QhP1p2-T7Ww'] },
+  'affet___muslum gurses': { id: 'dJmB4w3x6b8', duration: 270, candidates: ['dJmB4w3x6b8', 'QhP1p2-T7Ww'] },
+  // Ebru Gündeş - Kurşun Adres Sormaz Ki
+  'kurşun adres sormaz ki___ebru gündeş': { id: 'Juec0RS8-sU', duration: 326, candidates: ['Juec0RS8-sU', 'yOycy66e7oM', '65RKYQY0P0M'] },
+  'kursun adres sormaz ki___ebru gundes': { id: 'Juec0RS8-sU', duration: 326, candidates: ['Juec0RS8-sU', 'yOycy66e7oM', '65RKYQY0P0M'] },
+  'kurşun adres sormaz ki___kenan doğulu': { id: 'Juec0RS8-sU', duration: 326, candidates: ['Juec0RS8-sU', 'yOycy66e7oM'] },
+  // Ebru Gündeş - Fırtınalar
+  'fırtınalar___ebru gündeş': { id: 'yOycy66e7oM', duration: 260, candidates: ['yOycy66e7oM', 'Juec0RS8-sU'] },
+  'firtinalar___ebru gundes': { id: 'yOycy66e7oM', duration: 260, candidates: ['yOycy66e7oM', 'Juec0RS8-sU'] },
+  // Tarkan
+  'şıkıdım (hepsi senin mi)___tarkan': { id: 'lM68D2wTwq8', duration: 235, candidates: ['lM68D2wTwq8', '65RKYQY0P0M'] },
+  'şıkıdım___tarkan': { id: 'lM68D2wTwq8', duration: 235, candidates: ['lM68D2wTwq8', '65RKYQY0P0M'] },
+  'kuzu kuzu___tarkan': { id: '65RKYQY0P0M', duration: 254, candidates: ['65RKYQY0P0M', 'lM68D2wTwq8'] },
+  // Levent Yüksel - Med Cezir
+  'med cezir___levent yüksel': { id: 'Lw9e1JdIe2A', duration: 285, candidates: ['Lw9e1JdIe2A', '59V1z9WdK1k'] },
+  'med cezir___levent yuksel': { id: 'Lw9e1JdIe2A', duration: 285, candidates: ['Lw9e1JdIe2A'] },
+  // Sezen Aksu - Kaybolan Yıllar
+  'kaybolan yıllar___sezen aksu': { id: '59V1z9WdK1k', duration: 245, candidates: ['59V1z9WdK1k', 'Lw9e1JdIe2A'] },
+  'kaybolan yillar___sezen aksu': { id: '59V1z9WdK1k', duration: 245, candidates: ['59V1z9WdK1k'] },
+  // The Weeknd - Blinding Lights
+  'blinding lights___the weeknd': { id: '4NRXx6U8ABQ', duration: 200, candidates: ['4NRXx6U8ABQ', 'fHI8X4OfY6I'] },
+  // Billie Eilish - Birds of a Feather
+  'birds of a feather___billie eilish': { id: 'd5gf9dXbPi0', duration: 212, candidates: ['d5gf9dXbPi0'] },
+  // Mor ve Ötesi - Bir Derdim Var
+  'bir derdim var___mor ve ötesi': { id: 'bcHv7PjSHrs', duration: 230, candidates: ['bcHv7PjSHrs'] },
+  // Duman - Aman Aman
+  'aman aman___duman': { id: 'T4BkYR7IEvY', duration: 245, candidates: ['T4BkYR7IEvY'] },
+  // Barış Manço - Gülpembe
+  'gülpembe___barış manço': { id: 'cBRC0BItmfk', duration: 305, candidates: ['cBRC0BItmfk'] },
+  // Ceza - Suspus
+  'suspus___ceza': { id: 'O--4-kh1a4c', duration: 255, candidates: ['O--4-kh1a4c'] }
 };
 
 // Invidious instances that allow open public search via CORS
@@ -43,10 +74,21 @@ export async function resolveClientTrackSource(title: string, artist: string): P
     return clientYtCache.get(key)!;
   }
 
-  // 2. Try Backend / Serverless Function API first for real-time live candidates
+  // 2. Check verified instant presets
+  if (POPULAR_PRESETS[key]) {
+    const preset = {
+      youtubeId: POPULAR_PRESETS[key].id,
+      duration: POPULAR_PRESETS[key].duration,
+      candidateIds: POPULAR_PRESETS[key].candidates
+    };
+    clientYtCache.set(key, preset);
+    return preset;
+  }
+
+  // 3. Try Backend / Serverless Function API first for real-time live candidates
   try {
     const res = await fetch(`/api/audio/full-source?title=${encodeURIComponent(cleanTitle)}&artist=${encodeURIComponent(cleanArtist)}`, {
-      signal: AbortSignal.timeout(4500)
+      signal: AbortSignal.timeout(9000)
     });
 
     const contentType = res.headers.get('content-type') || '';
@@ -64,17 +106,6 @@ export async function resolveClientTrackSource(title: string, artist: string): P
     }
   } catch (err) {
     console.warn('Backend full-source lookup unavailable, initiating client fallback...', err);
-  }
-
-  // 3. Check verified instant presets
-  if (POPULAR_PRESETS[key]) {
-    const preset = {
-      youtubeId: POPULAR_PRESETS[key].id,
-      duration: POPULAR_PRESETS[key].duration,
-      candidateIds: POPULAR_PRESETS[key].candidates
-    };
-    clientYtCache.set(key, preset);
-    return preset;
   }
 
   // 4. Client-Side Fallback A: Search open Invidious instances
