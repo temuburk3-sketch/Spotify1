@@ -141,20 +141,20 @@ async function fetchWithCorsFallback(targetUrl: string): Promise<string | null> 
  * Parses any Spotify URL (playlist, track, album, etc.) and extracts real tracklist + genuine audio
  */
 export async function parseSpotifyUrl(urlInput: string): Promise<SpotifyParsedResult | null> {
-  const trimmed = urlInput.trim();
+  let trimmed = urlInput.trim();
   let spotifyId = '';
   let type: 'playlist' | 'track' | 'album' | 'artist' | 'episode' | 'show' | 'unknown' = 'unknown';
 
-  // Support international localized URLs like /intl-tr/playlist/..., /intl-en/..., plain /playlist/..., /episode/..., /show/..., etc.
-  const match = trimmed.match(/open\.spotify\.com\/(?:[a-zA-Z]{2}(?:-[a-zA-Z]{2})?\/)?(?:intl-[a-z]{2}\/)?(playlist|track|album|artist|episode|show)\/([a-zA-Z0-9]+)/i);
+  // Support international localized URLs like /intl-tr/playlist/..., /intl-en/..., user playlists /user/.../playlist/..., /tr/..., etc.
+  const match = trimmed.match(/open\.spotify\.com\/(?:[a-zA-Z]{2}(?:-[a-zA-Z]{2})?\/)?(?:intl-[a-z]{2}\/)?(?:user\/[^\/]+\/)?(playlist|track|album|artist|episode|show)\/([a-zA-Z0-9]+)/i);
   if (match) {
     type = match[1].toLowerCase() as any;
     spotifyId = match[2];
-  } else if (trimmed.startsWith('spotify:')) {
-    const parts = trimmed.split(':');
-    if (parts.length >= 3) {
-      type = parts[1].toLowerCase() as any;
-      spotifyId = parts[2].split('?')[0];
+  } else if (trimmed.includes('spotify:')) {
+    const uriMatch = trimmed.match(/spotify:(playlist|track|album|artist|episode|show):([a-zA-Z0-9]+)/i);
+    if (uriMatch) {
+      type = uriMatch[1].toLowerCase() as any;
+      spotifyId = uriMatch[2];
     }
   } else {
     // Check if user just pasted an ID or query
@@ -165,23 +165,18 @@ export async function parseSpotifyUrl(urlInput: string): Promise<SpotifyParsedRe
     }
   }
 
-  if (!spotifyId) {
-    return null;
-  }
-
-  const cleanUrl = `https://open.spotify.com/${type}/${spotifyId}`;
-
-  // 1. Try resolving via backend / serverless endpoint
+  // 1. Try resolving via backend / serverless endpoint (Netlify & Server)
   try {
-    const serverRes = await fetch(`/api/spotify/resolve?url=${encodeURIComponent(cleanUrl)}&expandSeries=true`);
+    const resolveUrl = spotifyId ? `https://open.spotify.com/${type}/${spotifyId}` : trimmed;
+    const serverRes = await fetch(`/api/spotify/resolve?url=${encodeURIComponent(resolveUrl)}&expandSeries=true`);
     const contentType = serverRes.headers.get('content-type') || '';
     if (serverRes.ok && contentType.includes('application/json')) {
       const serverData = await serverRes.json();
       if (serverData && serverData.tracks && serverData.tracks.length > 0) {
         return {
           type: serverData.type || type,
-          id: spotifyId,
-          url: cleanUrl,
+          id: serverData.id || spotifyId,
+          url: resolveUrl,
           title: serverData.title,
           authorName: serverData.author,
           thumbnailUrl: serverData.coverUrl,
@@ -204,11 +199,17 @@ export async function parseSpotifyUrl(urlInput: string): Promise<SpotifyParsedRe
       }
     }
   } catch (err: any) {
-    if (err.message && (err.message.includes('Herkese Açık') || err.message.includes('Gizli') || err.message.includes('korumalı'))) {
+    if (err.message && (err.message.includes('Herkese Açık') || err.message.includes('Gizli') || err.message.includes('korumalı') || err.message.includes('bulunamadı'))) {
       throw err;
     }
     console.warn('Server resolve notice, checking direct embed fallback...', err);
   }
+
+  if (!spotifyId) {
+    return null;
+  }
+
+  const cleanUrl = `https://open.spotify.com/${type}/${spotifyId}`;
 
   // 2. Direct / Proxy Fallback: Fetch Spotify Embed and parse JSON state
   try {
@@ -375,22 +376,11 @@ export function createTracksFromSpotifyImport(parsed: SpotifyParsedResult, optio
   let tracks = parsed.tracks && parsed.tracks.length > 0 ? [...parsed.tracks] : [];
 
   if (tracks.length === 0) {
-    if (parsed.type === 'playlist' || parsed.type === 'album') {
+    if (parsed.singleTrack) {
+      tracks = [parsed.singleTrack];
+    } else {
       return [];
     }
-    tracks = [{
-      id: `spotify_track_${Date.now()}_${parsed.id}`,
-      title: parsed.title,
-      artist: parsed.authorName || 'Spotify Sanatçısı',
-      album: parsed.title,
-      duration: 190,
-      coverUrl: parsed.thumbnailUrl || 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=600&auto=format&fit=crop&q=80',
-      audioUrl: '',
-      source: 'spotify',
-      spotifyId: parsed.id,
-      addedAt: new Date().toISOString(),
-      genre: 'Pop'
-    }];
   }
 
   // Deduplicate if requested

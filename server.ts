@@ -680,18 +680,37 @@ async function scrapeSpotifyShow(showId: string) {
 
 // Extract Spotify Playlist, Track, Album, Episode, or Show with full tracklist & matching original audio
 async function resolveSpotifyUrl(url: string, options: { expandSeries?: boolean } = { expandSeries: true }) {
-  const trimmed = url.trim();
+  let trimmed = url.trim();
 
   // If user pasted a YouTube link into the import input, route seamlessly to YouTube resolver
   if (trimmed.includes("youtube.com") || trimmed.includes("youtu.be")) {
     return resolveYouTubeUrl(trimmed);
   }
 
+  // 0. Follow mobile shortlinks (spotify.link / spotify.app.link)
+  if (trimmed.includes("spotify.link") || trimmed.includes("spotify.app.link")) {
+    try {
+      const headRes = await fetch(trimmed, {
+        method: 'GET',
+        redirect: 'follow',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
+        },
+        signal: AbortSignal.timeout(5000)
+      });
+      if (headRes.url && headRes.url.includes("open.spotify.com")) {
+        trimmed = headRes.url;
+      }
+    } catch (e) {
+      console.warn("Short link redirect error in server.ts:", e);
+    }
+  }
+
   let type: 'playlist' | 'track' | 'album' | 'artist' | 'episode' | 'show' | 'unknown' = 'unknown';
   let id = '';
 
-  // Support international localized URLs (/intl-tr/playlist/..., /intl-en/..., etc.), query params, URIs, episodes, and shows
-  const match = trimmed.match(/open\.spotify\.com\/(?:[a-zA-Z]{2}(?:-[a-zA-Z]{2})?\/)?(?:intl-[a-z]{2}\/)?(playlist|track|album|artist|episode|show)\/([a-zA-Z0-9]+)/i);
+  // Support international localized URLs (/intl-tr/..., /intl-en/..., etc.), user playlists (/user/USERNAME/playlist/...), query params, URIs, episodes, and shows
+  const match = trimmed.match(/open\.spotify\.com\/(?:[a-zA-Z]{2}(?:-[a-zA-Z]{2})?\/)?(?:intl-[a-z]{2}\/)?(?:user\/[^\/]+\/)?(playlist|track|album|artist|episode|show)\/([a-zA-Z0-9]+)/i);
   if (match) {
     type = match[1].toLowerCase() as any;
     id = match[2];
@@ -989,8 +1008,11 @@ async function resolveSpotifyUrl(url: string, options: { expandSeries?: boolean 
       const res = await fetch(tUrl, {
         headers: {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
           "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+          "Sec-Ch-Ua": '"Chromium";v="125", "Not.A/Brand";v="24"',
+          "Sec-Ch-Ua-Mobile": "?0",
+          "Sec-Ch-Ua-Platform": '"Windows"',
           "Referer": "https://open.spotify.com/"
         },
         signal: AbortSignal.timeout(6000)
@@ -1179,14 +1201,19 @@ async function resolveSpotifyUrl(url: string, options: { expandSeries?: boolean 
 
     const audioUrl = t.audioPreview?.url || t.audio_preview_url || t.preview_url || "";
 
+    const seedKey = `${trackTitle.toLowerCase().trim()}___${trackArtist.toLowerCase().trim()}`;
+    const cachedSeed = videoIdCache.get(seedKey)?.result;
+
     return {
       id: `sp_${trackSpotifyId}_${idx}`,
       title: trackTitle,
       artist: trackArtist,
       album: t.album?.name || t.show?.name || title,
-      duration: trackDuration,
+      duration: cachedSeed?.duration || trackDuration,
       coverUrl: trackCover,
       audioUrl: audioUrl,
+      youtubeId: cachedSeed?.youtubeId || undefined,
+      candidateIds: cachedSeed?.candidateIds || (cachedSeed?.youtubeId ? [cachedSeed.youtubeId] : undefined),
       source: 'spotify' as const,
       spotifyId: trackSpotifyId,
       addedAt: new Date().toISOString(),

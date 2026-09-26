@@ -30,6 +30,26 @@
   status = 200
 
 [[redirects]]
+  from = "/api/audio/full-stream"
+  to = "/.netlify/functions/full-source"
+  status = 200
+
+[[redirects]]
+  from = "/api/audio/match"
+  to = "/.netlify/functions/full-source"
+  status = 200
+
+[[redirects]]
+  from = "/api/spotify/charts"
+  to = "/.netlify/functions/spotify-search"
+  status = 200
+
+[[redirects]]
+  from = "/api/playlist/tracks"
+  to = "/.netlify/functions/spotify-resolve"
+  status = 200
+
+[[redirects]]
   from = "/api/lyrics"
   to = "/.netlify/functions/lyrics"
   status = 200

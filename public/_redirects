@@ -1,10 +1,15 @@
 # Netlify Redirects Configuration
 # Functions routing FIRST
-/api/audio/full-source    /.netlify/functions/full-source   200
-/api/audio/full-stream    /.netlify/functions/full-source   200
-/api/lyrics               /.netlify/functions/lyrics        200
-/api/gemini/lyrics        /.netlify/functions/lyrics        200
-/api/*                    /.netlify/functions/:splat        200
+/api/spotify/resolve      /.netlify/functions/spotify-resolve   200
+/api/spotify/search       /.netlify/functions/spotify-search    200
+/api/spotify/charts       /.netlify/functions/spotify-search    200
+/api/radio/track          /.netlify/functions/radio-track       200
+/api/audio/full-source    /.netlify/functions/full-source       200
+/api/audio/full-stream    /.netlify/functions/full-source       200
+/api/audio/match          /.netlify/functions/full-source       200
+/api/lyrics               /.netlify/functions/lyrics            200
+/api/gemini/lyrics        /.netlify/functions/lyrics            200
+/api/playlist/tracks      /.netlify/functions/spotify-resolve   200
 
 # Protect missing assets from being served as index.html (which causes MIME errors)
 /assets/*                 /assets/:splat                    404

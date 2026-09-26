@@ -665,9 +665,24 @@ export async function fetchUniversalArtistTracks(artistId: string, artistName: s
  * Universal Playlist Tracks Loader
  */
 export async function fetchUniversalPlaylistTracks(playlistId: string, playlistName: string): Promise<Track[]> {
-  // 1. Try server API
+  const cleanId = playlistId.replace(/^sp_/, '').replace(/^spotify_/, '').replace(/^pl_/, '');
+
+  // 1. If this is a Spotify playlist ID, resolve genuine tracks with high priority!
+  if (cleanId.length === 22 || cleanId.startsWith('37i9dQ') || playlistId.startsWith('sp_')) {
+    try {
+      const sRes = await fetchWithTimeout(`/api/spotify/resolve?url=${encodeURIComponent(`https://open.spotify.com/playlist/${cleanId}`)}`, {}, 6000);
+      if (sRes.ok) {
+        const sData = await sRes.json();
+        if (sData.tracks && Array.isArray(sData.tracks) && sData.tracks.length > 0) {
+          return sData.tracks;
+        }
+      }
+    } catch {}
+  }
+
+  // 2. Try server API
   try {
-    const sRes = await fetchWithTimeout(`/api/playlist/tracks?playlistId=${encodeURIComponent(playlistId)}&name=${encodeURIComponent(playlistName)}`, {}, 2000);
+    const sRes = await fetchWithTimeout(`/api/playlist/tracks?playlistId=${encodeURIComponent(playlistId)}&name=${encodeURIComponent(playlistName)}`, {}, 3000);
     if (sRes.ok) {
       const sData = await sRes.json();
       if (sData.tracks && Array.isArray(sData.tracks) && sData.tracks.length > 0) {
@@ -676,7 +691,7 @@ export async function fetchUniversalPlaylistTracks(playlistId: string, playlistN
     }
   } catch {}
 
-  // 2. Curated thematic queries for open API
+  // 3. Curated thematic queries for open API
   const query = playlistName.replace(/Türkçe|Pop|Rock|Rap|Arabesk|Hits|Top 50/gi, '').trim() || playlistName;
   return await searchUniversalTracks(query);
 }
