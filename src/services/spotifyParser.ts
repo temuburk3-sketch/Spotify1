@@ -165,6 +165,7 @@ export async function parseSpotifyUrl(urlInput: string): Promise<SpotifyParsedRe
     }
   }
 
+  let serverErrorMsg = '';
   // 1. Try resolving via backend / serverless endpoint (Netlify & Server)
   try {
     const resolveUrl = spotifyId ? `https://open.spotify.com/${type}/${spotifyId}` : trimmed;
@@ -186,22 +187,17 @@ export async function parseSpotifyUrl(urlInput: string): Promise<SpotifyParsedRe
           parentShow: serverData.parentShow
         };
       } else if (serverData && serverData.error) {
-        throw new Error(serverData.error);
+        serverErrorMsg = serverData.error;
       }
     } else if (!serverRes.ok && contentType.includes('application/json')) {
       try {
         const errJson = await serverRes.json();
         if (errJson && errJson.error) {
-          throw new Error(errJson.error);
+          serverErrorMsg = errJson.error;
         }
-      } catch (e: any) {
-        if (e.message && !e.message.includes('JSON')) throw e;
-      }
+      } catch {}
     }
   } catch (err: any) {
-    if (err.message && (err.message.includes('Herkese Açık') || err.message.includes('Gizli') || err.message.includes('korumalı') || err.message.includes('bulunamadı'))) {
-      throw err;
-    }
     console.warn('Server resolve notice, checking direct embed fallback...', err);
   }
 
@@ -367,6 +363,10 @@ export async function parseSpotifyUrl(urlInput: string): Promise<SpotifyParsedRe
       throw e;
     }
     console.warn('oEmbed fallback notice:', e);
+  }
+
+  if (serverErrorMsg) {
+    throw new Error(serverErrorMsg);
   }
 
   return null;

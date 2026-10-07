@@ -412,7 +412,7 @@ export default function App() {
       if (!contextName?.includes('Radyo') && contextTracks.length > 1) {
         const otherTracks = contextTracks.filter(t => t.id !== track.id);
         if (shuffleMode !== 'off') {
-          const shuffledQueue = createTrueShuffleQueue(otherTracks);
+          const shuffledQueue = createTrueShuffleQueue(otherTracks, undefined, playedTrackIdsRef.current);
           setQueue(shuffledQueue);
           queueRef.current = shuffledQueue;
         } else {
@@ -644,7 +644,7 @@ export default function App() {
       // Balanced dispersion shuffle with high-entropy randomized sampling
       const remaining = currentList.filter(t => !playedTrackIds.has(t.id));
       const pool = remaining.length > 0 ? remaining : currentList.filter(t => t.id !== currentTrack?.id);
-      const balancedPool = getBalancedShuffleQueue(pool.length > 0 ? pool : currentList, currentTrack?.id);
+      const balancedPool = getBalancedShuffleQueue(pool.length > 0 ? pool : currentList, currentTrack?.id, playedTrackIds);
       const pickSlice = balancedPool.slice(0, Math.min(4, balancedPool.length));
       const next = pickSlice.length > 0 ? pickSlice[Math.floor(Math.random() * pickSlice.length)] : pool[0];
       if (next) {
@@ -734,7 +734,7 @@ export default function App() {
       setShuffleMode('smart');
       setSmartShuffleEnabled(true);
       if (queue.length > 1) {
-        const shuffled = createTrueShuffleQueue(queue);
+        const shuffled = createTrueShuffleQueue(queue, undefined, playedTrackIdsRef.current);
         setQueue(shuffled);
         queueRef.current = shuffled;
       }
@@ -743,7 +743,7 @@ export default function App() {
       setShuffleMode('random');
       setSmartShuffleEnabled(false);
       if (queue.length > 1) {
-        const shuffled = createTrueShuffleQueue(queue);
+        const shuffled = createTrueShuffleQueue(queue, undefined, playedTrackIdsRef.current);
         setQueue(shuffled);
         queueRef.current = shuffled;
       }
@@ -916,7 +916,7 @@ export default function App() {
       const randomIdx = Math.floor(Math.random() * playlist.tracks.length);
       const chosenTrack = playlist.tracks[randomIdx];
       const rest = playlist.tracks.filter((_, i) => i !== randomIdx);
-      const shuffledQueue = createTrueShuffleQueue(rest);
+      const shuffledQueue = createTrueShuffleQueue(rest, undefined, playedTrackIdsRef.current);
       handlePlayTrack(chosenTrack, playlist.tracks, playlist.name);
       setQueue(shuffledQueue);
       queueRef.current = shuffledQueue;
@@ -1102,7 +1102,7 @@ export default function App() {
   const handlePlayMixedTracks = (tracks: Track[], mixTitle: string) => {
     if (tracks.length === 0) return;
     const [first, ...rest] = tracks;
-    const queueTracks = shuffleMode !== 'off' ? createTrueShuffleQueue(rest) : rest;
+    const queueTracks = shuffleMode !== 'off' ? createTrueShuffleQueue(rest, undefined, playedTrackIdsRef.current) : rest;
     setPlaybackContext({
       type: 'custom',
       tracks: tracks,
@@ -1143,7 +1143,7 @@ export default function App() {
       showToast('Sırada karıştırılacak yeterli şarkı yok');
       return;
     }
-    const shuffled = createTrueShuffleQueue(queue);
+    const shuffled = createTrueShuffleQueue(queue, undefined, playedTrackIdsRef.current);
     setQueue(shuffled);
     queueRef.current = shuffled;
     showToast(`🔀 Sıradaki ${shuffled.length} şarkı gerçek rastgelelikle yeniden karıştırıldı!`);

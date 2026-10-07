@@ -123,6 +123,42 @@ export const handler = async (event: any) => {
     }
 
     if (!id || type === 'unknown') {
+      // If requested via /api/playlist/tracks with a generic name or Deezer ID
+      const queryName = (params.name || rawUrl || 'Türkçe Pop').trim();
+      try {
+        const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(queryName)}&entity=song&limit=40&country=TR`;
+        const itRes = await fetch(itunesUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+        if (itRes.ok) {
+          const itData: any = await itRes.json();
+          if (Array.isArray(itData.results) && itData.results.length > 0) {
+            const tracks = itData.results.map((item: any, idx: number) => ({
+              id: `itunes_pl_${item.trackId || idx}`,
+              title: item.trackName,
+              artist: item.artistName,
+              album: item.collectionName || item.trackName,
+              duration: item.trackTimeMillis ? Math.round(item.trackTimeMillis / 1000) : 190,
+              coverUrl: item.artworkUrl100 ? item.artworkUrl100.replace('100x100bb', '600x600bb') : 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600',
+              audioUrl: item.previewUrl || '',
+              source: 'stream' as const,
+              addedAt: new Date().toISOString(),
+              genre: item.primaryGenreName || 'Pop'
+            }));
+            return {
+              statusCode: 200,
+              headers,
+              body: JSON.stringify({
+                type: 'playlist',
+                id: params.playlistId || 'custom_pl',
+                title: queryName,
+                author: 'SoundPulse',
+                coverUrl: tracks[0]?.coverUrl,
+                tracks
+              })
+            };
+          }
+        }
+      } catch {}
+
       return {
         statusCode: 400,
         headers,
@@ -167,6 +203,30 @@ export const handler = async (event: any) => {
           }
         }
       } catch {}
+    }
+
+    // Proxy fallback if direct Netlify datacenter IP was blocked by Spotify
+    if (!embedHtml) {
+      const proxyUrls = [
+        `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://open.spotify.com/embed/${type}/${id}`)}`,
+        `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(`https://open.spotify.com/embed/${type}/${id}`)}`
+      ];
+
+      for (const pUrl of proxyUrls) {
+        try {
+          const pRes = await fetch(pUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+            signal: AbortSignal.timeout(6000)
+          });
+          if (pRes.ok) {
+            const pText = await pRes.text();
+            if (pText && (pText.includes('__NEXT_DATA__') || pText.includes('initial-state') || pText.includes('resource'))) {
+              embedHtml = pText;
+              break;
+            }
+          }
+        } catch {}
+      }
     }
 
     let entity: any = null;

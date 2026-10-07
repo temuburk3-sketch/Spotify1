@@ -3319,7 +3319,64 @@ Provide a valid JSON array where each object has:
       rawRecommendations = aiResult;
     }
 
-    // Fallback pool used ONLY if AI failed or returned zero recommendations
+    // Dynamic Live Fallback: Query iTunes Store API for seed artist + peer artists if AI returned empty
+    if (rawRecommendations.length === 0) {
+      try {
+        const peersMap: Record<string, string[]> = {
+          'ümit besen': ['Arif Susam', 'Coşkun Sabah', 'Nejat Alp', 'Cengiz Kurtoğlu', 'Ferdi Özbeğen', 'Selami Şahin', 'Atilla Kaya'],
+          'ferdi özbeğen': ['Ümit Besen', 'Tanju Okan', 'Nilüfer', 'Asu Maralman', 'Esmeray', 'Ayla Dikmen', 'Tülay Özer'],
+          'tanju okan': ['Ferdi Özbeğen', 'Ümit Besen', 'Ayten Alpman', 'Dario Moreno', 'Erol Evgin'],
+          'arif susam': ['Ümit Besen', 'Coşkun Sabah', 'Nejat Alp', 'Cengiz Kurtoğlu', 'Ferdi Özbeğen'],
+          'coşkun sabah': ['Ümit Besen', 'Arif Susam', 'Nejat Alp', 'Cengiz Kurtoğlu', 'Selami Şahin'],
+          'nejat alp': ['Ümit Besen', 'Arif Susam', 'Coşkun Sabah', 'Cengiz Kurtoğlu', 'Atilla Kaya'],
+          'cengiz kurtoğlu': ['Ümit Besen', 'Arif Susam', 'Ferdi Özbeğen', 'Nejat Alp', 'Selami Şahin'],
+          'müslüm gürses': ['Ferdi Tayfur', 'Bergen', 'Azer Bülbül', 'Cengiz Kurtoğlu', 'İbrahim Tatlıses', 'Ebru Gündeş'],
+          'tarkan': ['Kenan Doğulu', 'Mustafa Sandal', 'Murat Boz', 'Edis', 'Yalın'],
+          'duman': ['Mor ve Ötesi', 'Şebnem Ferah', 'Teoman', 'Adamlar', 'Madrigal']
+        };
+
+        const lowerArt = artist.toLowerCase().trim();
+        let matchedPeers: string[] = [];
+        for (const [key, pList] of Object.entries(peersMap)) {
+          if (lowerArt.includes(key) || key.includes(lowerArt)) {
+            matchedPeers = pList;
+            break;
+          }
+        }
+
+        const queryArtists = [artist, ...matchedPeers.sort(() => Math.random() - 0.5).slice(0, 3)].filter(Boolean);
+        const liveFetches = queryArtists.map(async (art) => {
+          try {
+            const url = `https://itunes.apple.com/search?term=${encodeURIComponent(art)}&entity=song&limit=10&country=TR`;
+            const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(3500) });
+            if (r.ok) {
+              const d: any = await r.json();
+              return Array.isArray(d.results) ? d.results : [];
+            }
+          } catch {}
+          return [];
+        });
+
+        const liveResults = (await Promise.all(liveFetches)).flat();
+        const liveTracks = liveResults
+          .filter((item: any) => item.trackName && item.artistName && !excludeSet.has(item.trackName.toLowerCase().trim()))
+          .map((item: any) => ({
+            title: item.trackName,
+            artist: item.artistName,
+            genre: item.primaryGenreName || genre || detectedTheme,
+            reason: `✨ ${artist || title} ekolünü tamamlayan klasik eser`,
+            matchScore: 97
+          }));
+
+        if (liveTracks.length >= 4) {
+          rawRecommendations = liveTracks.sort(() => Math.random() - 0.5);
+        }
+      } catch (liveErr) {
+        console.warn("Live peer radio query fallback note:", liveErr);
+      }
+    }
+
+    // Static pool used ONLY if both AI and live query returned zero recommendations
     if (rawRecommendations.length === 0) {
       let pool: { title: string; artist: string; genre: string; reason: string; matchScore: number }[] = [];
       if (detectedCategory === "nostalji") {

@@ -122,12 +122,15 @@ export const ARTIST_SIMILARITY_GRAPH: Record<string, string[]> = {
     'Hakan Altun'
   ],
   'ümit besen': [
+    'Arif Susam',
+    'Coşkun Sabah',
+    'Nejat Alp',
     'Cengiz Kurtoğlu',
     'Ferdi Özbeğen',
-    'Arif Susam',
-    'Nejat Alp',
     'Selami Şahin',
-    'Coşkun Sabah'
+    'Atilla Kaya',
+    'Gülden Karaböcek',
+    'Neşe Karaböcek'
   ],
   'neşe karaböcek': [
     'Gülden Karaböcek',
@@ -2017,16 +2020,20 @@ export function buildSpotifySmartShuffleQueue(
 }
 
 // ----------------------------------------------------
-// 5.1 High-Entropy True Fisher-Yates Shuffle with Artist Dispersion
+// 5.1 Spotify-Grade Bregman Dithering Shuffle
+// Uniformly spaces artists across the entire playlist length,
+// prevents same-artist clustering at the end, and applies recency fatigue suppression.
 // ----------------------------------------------------
 export function createTrueShuffleQueue<T extends { id?: string; artist?: string }>(
   items: T[],
-  excludeFilter?: (item: T) => boolean
+  excludeFilter?: (item: T) => boolean,
+  recentlyPlayedIds?: Set<string>
 ): T[] {
   if (!items || items.length <= 1) return [...(items || [])];
 
   const pool = excludeFilter ? items.filter(t => !excludeFilter(t)) : [...items];
-  if (pool.length <= 1) return pool;
+  const N = pool.length;
+  if (N <= 1) return pool;
 
   // 1. Group items by artist
   const artistBins: Record<string, T[]> = {};
@@ -2036,64 +2043,76 @@ export function createTrueShuffleQueue<T extends { id?: string; artist?: string 
     artistBins[key].push(item);
   }
 
-  // 2. High-entropy Fisher-Yates shuffle within each bin
-  const binArrays = Object.values(artistBins);
-  for (const bin of binArrays) {
+  // 2. High-entropy Fisher-Yates shuffle within each artist's songs
+  for (const bin of Object.values(artistBins)) {
     for (let i = bin.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [bin[i], bin[j]] = [bin[j], bin[i]];
     }
   }
 
-  // 3. True Fisher-Yates shuffle on bin order
-  for (let i = binArrays.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [binArrays[i], binArrays[j]] = [binArrays[j], binArrays[i]];
+  // 3. Assign target slots using Bregman-style dithering / uniform spreading
+  // If an artist has K songs in a playlist of size N, their songs are spaced ~ N/K apart
+  interface SlottedItem {
+    item: T;
+    idealPos: number;
   }
 
-  // 4. Sort bins by size descending so largest artists are dispersed first
-  binArrays.sort((a, b) => b.length - a.length);
+  const slotted: SlottedItem[] = [];
+  const sortedBinEntries = Object.entries(artistBins).sort((a, b) => b[1].length - a[1].length);
 
-  // 5. Interleave with random round perturbation (Bregman dispersion)
-  const result: T[] = [];
-  const maxLen = Math.max(...binArrays.map(b => b.length));
+  for (const [, bin] of sortedBinEntries) {
+    const K = bin.length;
+    const interval = N / K;
+    const offset = Math.random() * interval;
 
-  for (let step = 0; step < maxLen; step++) {
-    // True Fisher-Yates on the round order
-    const roundBins = [...binArrays];
-    for (let i = roundBins.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [roundBins[i], roundBins[j]] = [roundBins[j], roundBins[i]];
-    }
+    bin.forEach((track, idx) => {
+      // Base uniform target position
+      let ideal = offset + idx * interval;
+      // Add small jitter (-0.25 to +0.25 of interval) so order is fresh on each shuffle
+      ideal += (Math.random() - 0.5) * (interval * 0.5);
 
-    for (const bin of roundBins) {
-      if (bin.length > step) {
-        // Prevent consecutive same artist if possible
-        const candidate = bin[step];
-        const lastItem = result[result.length - 1];
-        if (
-          lastItem &&
-          lastItem.artist &&
-          candidate.artist &&
-          lastItem.artist.toLowerCase().trim() === candidate.artist.toLowerCase().trim() &&
-          bin.length > step + 1
-        ) {
-          // Swap with next in bin if available
-          const nextCand = bin[step + 1];
-          bin[step + 1] = candidate;
-          result.push(nextCand);
-        } else {
-          result.push(candidate);
-        }
+      // Recency fatigue suppression: if recently played, shift towards back half of queue
+      if (recentlyPlayedIds && track.id && recentlyPlayedIds.has(track.id)) {
+        ideal += N * 0.45;
       }
+
+      slotted.push({ item: track, idealPos: ideal });
+    });
+  }
+
+  // 4. Sort by assigned ideal position
+  slotted.sort((a, b) => a.idealPos - b.idealPos);
+  const rawOrdered = slotted.map(s => s.item);
+
+  // 5. Final pass: strictly resolve any adjacent same-artist collisions
+  const result: T[] = [];
+  const remaining = [...rawOrdered];
+
+  while (remaining.length > 0) {
+    const lastItem = result[result.length - 1];
+    const lastArtist = (lastItem?.artist || '').trim().toLowerCase();
+
+    // Look for first candidate with a different artist
+    let candidateIdx = -1;
+    if (lastArtist) {
+      candidateIdx = remaining.findIndex(
+        t => (t.artist || '').trim().toLowerCase() !== lastArtist
+      );
     }
+
+    if (candidateIdx === -1) {
+      candidateIdx = 0;
+    }
+
+    result.push(remaining.splice(candidateIdx, 1)[0]);
   }
 
   return result;
 }
 
-export function getBalancedShuffleQueue(tracks: Track[], currentTrackId?: string): Track[] {
-  return createTrueShuffleQueue(tracks, t => t.id === currentTrackId);
+export function getBalancedShuffleQueue(tracks: Track[], currentTrackId?: string, recentlyPlayedIds?: Set<string>): Track[] {
+  return createTrueShuffleQueue(tracks, t => t.id === currentTrackId, recentlyPlayedIds);
 }
 
 // ----------------------------------------------------
